@@ -208,7 +208,7 @@ export class SoundEngine {
     const sv = this.storedVoices.get(id);
     if (!sv) return;
     const count = this.storedVoices.size;
-    const targetGain = Math.max(0.02, 0.15 / Math.sqrt(count));
+    const targetGain = Math.max(0.015, 0.12 / Math.sqrt(count));
     sv.gain.gain.rampTo(targetGain, 1);
     sv.filter.frequency.rampTo(2000, 1);
   }

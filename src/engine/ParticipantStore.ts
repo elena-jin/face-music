@@ -93,6 +93,7 @@ export class ParticipantStore {
     }
     this.audioUrls.clear();
     this.db?.close();
+    this.db = null;
   }
 
   static generateFaceDNA(landmarks: FaceLandmark[]): string {

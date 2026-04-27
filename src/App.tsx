@@ -202,6 +202,14 @@ export default function App() {
   useEffect(() => {
     if (!started || !modelReady) return;
 
+    const cleanupInterval = setInterval(() => {
+      setParticleEffects((prev) => {
+        const now = Date.now();
+        const filtered = prev.filter((e) => now - e.timestamp < 2500);
+        return filtered.length === prev.length ? prev : filtered;
+      });
+    }, 3000);
+
     const loop = () => {
       if (videoRef.current && trackerRef.current) {
         const tracked = trackerRef.current.detect(videoRef.current, performance.now());
@@ -258,7 +266,10 @@ export default function App() {
     };
     rafRef.current = requestAnimationFrame(loop);
 
-    return () => cancelAnimationFrame(rafRef.current);
+    return () => {
+      cancelAnimationFrame(rafRef.current);
+      clearInterval(cleanupInterval);
+    };
   }, [started, modelReady, captureParticipant]);
 
   const getFade = useCallback(
