@@ -1,17 +1,14 @@
-const SAMPLE_RATE = 44100;
 const MAX_DURATION_MS = 3000;
 
 export class AudioCapture {
   private stream: MediaStream | null = null;
-  private recorder: MediaRecorder | null = null;
-  private chunks: Blob[] = [];
   private recording = false;
-  private startTime = 0;
+  private pendingResult: Promise<{ blob: Blob; duration: number }> | null = null;
 
   async init(): Promise<boolean> {
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: { sampleRate: SAMPLE_RATE, echoCancellation: true, noiseSuppression: true },
+        audio: { sampleRate: 44100, echoCancellation: true, noiseSuppression: true },
       });
       return true;
     } catch {
@@ -19,64 +16,56 @@ export class AudioCapture {
     }
   }
 
-  startRecording(): void {
-    if (this.recording || !this.stream) return;
-    this.chunks = [];
+  capture(): Promise<{ blob: Blob; duration: number }> {
+    if (this.recording || !this.stream) {
+      return Promise.resolve({ blob: new Blob(), duration: 0 });
+    }
+
     this.recording = true;
-    this.startTime = Date.now();
 
     const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'
       : 'audio/webm';
 
-    this.recorder = new MediaRecorder(this.stream, { mimeType });
-    this.recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) this.chunks.push(e.data);
-    };
-    this.recorder.start(100);
+    const chunks: Blob[] = [];
+    const recorder = new MediaRecorder(this.stream, { mimeType });
+    const startTime = Date.now();
 
-    setTimeout(() => {
-      if (this.recording) this.stopRecording();
-    }, MAX_DURATION_MS);
-  }
+    this.pendingResult = new Promise<{ blob: Blob; duration: number }>((resolve) => {
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
 
-  stopRecording(): Promise<{ blob: Blob; duration: number }> {
-    return new Promise((resolve) => {
-      if (!this.recorder || !this.recording) {
-        resolve({ blob: new Blob(), duration: 0 });
-        return;
-      }
-
-      const duration = Math.min(Date.now() - this.startTime, MAX_DURATION_MS);
-      this.recording = false;
-
-      this.recorder.onstop = () => {
-        const blob = new Blob(this.chunks, { type: 'audio/webm;codecs=opus' });
-        this.chunks = [];
+      recorder.onstop = () => {
+        const duration = Math.min(Date.now() - startTime, MAX_DURATION_MS);
+        const blob = new Blob(chunks, { type: 'audio/webm;codecs=opus' });
+        this.recording = false;
+        this.pendingResult = null;
         resolve({ blob, duration });
       };
 
-      this.recorder.stop();
+      recorder.start(100);
+
+      setTimeout(() => {
+        if (recorder.state === 'recording') {
+          recorder.stop();
+        }
+      }, MAX_DURATION_MS);
     });
+
+    return this.pendingResult;
   }
 
   isRecording(): boolean {
     return this.recording;
   }
 
-  getElapsed(): number {
-    if (!this.recording) return 0;
-    return Date.now() - this.startTime;
-  }
-
   destroy(): void {
-    if (this.recording && this.recorder) {
-      this.recorder.stop();
-    }
     if (this.stream) {
       this.stream.getTracks().forEach((t) => t.stop());
     }
     this.stream = null;
-    this.recorder = null;
+    this.recording = false;
+    this.pendingResult = null;
   }
 }

@@ -119,28 +119,16 @@ export default function App() {
 
     capturingFaceId.current = face.id;
     setIsCapturing(true);
-    capturedFaces.current.add(face.id);
 
-    captureRef.current.startRecording();
-
-    await new Promise<void>((resolve) => {
-      const check = () => {
-        if (!captureRef.current?.isRecording()) {
-          resolve();
-          return;
-        }
-        requestAnimationFrame(check);
-      };
-      check();
-    });
-
-    const { blob, duration } = await captureRef.current.stopRecording();
+    const { blob, duration } = await captureRef.current.capture();
 
     if (blob.size === 0) {
       capturingFaceId.current = null;
       setIsCapturing(false);
       return;
     }
+
+    capturedFaces.current.add(face.id);
 
     const store = storeRef.current;
     const faceDNA = ParticipantStore.generateFaceDNA(face.landmarks);
