@@ -1,10 +1,10 @@
 import * as Tone from 'tone';
-import type { TrackedFace } from './types';
+import type { TrackedFace, Participant } from './types';
 
 const PENTATONIC = ['C', 'D', 'E', 'G', 'A'];
 const OCTAVE_RANGE = [3, 4, 5, 6];
 
-interface FaceVoice {
+interface LiveVoice {
   synth: Tone.Synth;
   panner: Tone.Panner;
   filter: Tone.Filter;
@@ -14,8 +14,18 @@ interface FaceVoice {
   fadeTarget: number;
 }
 
+interface StoredVoice {
+  player: Tone.Player;
+  panner: Tone.Panner;
+  gain: Tone.Gain;
+  filter: Tone.Filter;
+  nextPlayTime: number;
+  baseVolume: number;
+}
+
 export class SoundEngine {
-  private voices: Map<string, FaceVoice> = new Map();
+  private liveVoices: Map<string, LiveVoice> = new Map();
+  private storedVoices: Map<string, StoredVoice> = new Map();
   private reverb: Tone.Reverb | null = null;
   private compressor: Tone.Compressor | null = null;
   private masterGain: Tone.Gain | null = null;
@@ -46,7 +56,8 @@ export class SoundEngine {
   private startLoop(): void {
     const tick = () => {
       const now = Tone.now();
-      for (const [, voice] of this.voices) {
+
+      for (const [, voice] of this.liveVoices) {
         if (now >= voice.nextNoteTime) {
           voice.synth.triggerAttackRelease(voice.lastNote, '4n', now);
           const interval = 1.5 + Math.random() * 2.5;
@@ -54,61 +65,145 @@ export class SoundEngine {
         }
         voice.gain.gain.rampTo(voice.fadeTarget * 0.15, 0.3);
       }
+
+      for (const [, sv] of this.storedVoices) {
+        if (now >= sv.nextPlayTime && sv.player.loaded) {
+          try {
+            if (sv.player.state !== 'started') {
+              sv.player.start(now);
+            }
+          } catch {
+            // player may not be ready
+          }
+          const interval = 4 + Math.random() * 12;
+          sv.nextPlayTime = now + interval;
+        }
+      }
+
       this.loopId = requestAnimationFrame(tick);
     };
     this.loopId = requestAnimationFrame(tick);
   }
 
-  update(faces: TrackedFace[], getFade: (f: TrackedFace) => number): void {
+  updateLiveFaces(faces: TrackedFace[], getFade: (f: TrackedFace) => number): void {
     if (!this.started || !this.reverb) return;
 
     const activeFaceIds = new Set(faces.map((f) => f.id));
 
-    for (const [id] of this.voices) {
+    for (const [id] of this.liveVoices) {
       if (!activeFaceIds.has(id)) {
-        this.removeVoice(id);
+        this.removeLiveVoice(id);
       }
     }
 
     const activeCount = faces.filter((f) => f.active).length;
-
     if (this.droneFilter) {
-      const freq = 120 + activeCount * 40;
-      this.droneFilter.frequency.rampTo(Math.min(freq, 400), 1);
+      const freq = 120 + activeCount * 40 + this.storedVoices.size * 5;
+      this.droneFilter.frequency.rampTo(Math.min(freq, 600), 1);
     }
 
     for (const face of faces) {
       const fade = getFade(face);
       if (fade <= 0) {
-        this.removeVoice(face.id);
+        this.removeLiveVoice(face.id);
         continue;
       }
 
-      let voice = this.voices.get(face.id);
+      let voice = this.liveVoices.get(face.id);
       if (!voice) {
-        const created = this.createVoice(face);
+        const created = this.createLiveVoice(face);
         if (!created) continue;
         voice = created;
-        this.voices.set(face.id, voice);
+        this.liveVoices.set(face.id, voice);
       }
 
       voice.panner.pan.rampTo((face.centerX - 0.5) * 1.6, 0.2);
-
       const octaveIdx = Math.floor(face.centerY * OCTAVE_RANGE.length);
       const octave = OCTAVE_RANGE[Math.min(octaveIdx, OCTAVE_RANGE.length - 1)];
       const noteIdx = Math.floor(((face.centerX + face.centerY) * 2.5) % PENTATONIC.length);
       voice.lastNote = `${PENTATONIC[noteIdx]}${octave}`;
-
       const brightness = 400 + face.velocity * 8000 + (1 - face.faceWidth) * 2000;
       voice.filter.frequency.rampTo(Math.min(brightness, 6000), 0.3);
-
       voice.fadeTarget = fade;
     }
   }
 
-  private createVoice(face: TrackedFace): FaceVoice | null {
-    if (!this.reverb) return null;
+  async addParticipantSound(participant: Participant, audioUrl: string): Promise<void> {
+    if (!this.started || !this.reverb) return;
+    if (this.storedVoices.has(participant.id)) return;
 
+    try {
+      const totalCount = this.storedVoices.size + 1;
+      const baseVol = Math.max(-40, -18 - totalCount * 0.5);
+
+      const gain = new Tone.Gain(0);
+      const panner = new Tone.Panner((participant.centerX - 0.5) * 1.4).connect(gain);
+      const filter = new Tone.Filter(2000, 'lowpass').connect(panner);
+      gain.connect(this.reverb);
+
+      const player = new Tone.Player({
+        url: audioUrl,
+        loop: false,
+        volume: baseVol,
+        fadeIn: 0.5,
+        fadeOut: 0.5,
+      }).connect(filter);
+
+      await Tone.loaded();
+
+      gain.gain.rampTo(0.12, 2);
+
+      this.storedVoices.set(participant.id, {
+        player,
+        panner,
+        gain,
+        filter,
+        nextPlayTime: Tone.now() + Math.random() * 5,
+        baseVolume: baseVol,
+      });
+
+      this.rebalanceStoredVoices();
+    } catch {
+      // audio load failed silently
+    }
+  }
+
+  private rebalanceStoredVoices(): void {
+    const count = this.storedVoices.size;
+    if (count === 0) return;
+
+    const targetGain = Math.max(0.02, 0.15 / Math.sqrt(count));
+
+    for (const [, sv] of this.storedVoices) {
+      sv.gain.gain.rampTo(targetGain, 3);
+    }
+  }
+
+  highlightParticipant(id: string): void {
+    const sv = this.storedVoices.get(id);
+    if (!sv || !sv.player.loaded) return;
+    sv.gain.gain.rampTo(0.4, 0.3);
+    sv.filter.frequency.rampTo(6000, 0.3);
+    try {
+      if (sv.player.state !== 'started') {
+        sv.player.start();
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  unhighlightParticipant(id: string): void {
+    const sv = this.storedVoices.get(id);
+    if (!sv) return;
+    const count = this.storedVoices.size;
+    const targetGain = Math.max(0.02, 0.15 / Math.sqrt(count));
+    sv.gain.gain.rampTo(targetGain, 1);
+    sv.filter.frequency.rampTo(2000, 1);
+  }
+
+  private createLiveVoice(face: TrackedFace): LiveVoice | null {
+    if (!this.reverb) return null;
     const waveforms = ['sine', 'triangle', 'sine'] as const;
     const waveIdx = parseInt(face.id.replace('face-', ''), 10) % waveforms.length;
 
@@ -128,18 +223,15 @@ export class SoundEngine {
     const note = `${PENTATONIC[noteIdx % PENTATONIC.length]}${octave}`;
 
     return {
-      synth,
-      panner,
-      filter,
-      gain,
+      synth, panner, filter, gain,
       lastNote: note,
       nextNoteTime: Tone.now() + Math.random() * 2,
       fadeTarget: 1,
     };
   }
 
-  private removeVoice(id: string): void {
-    const voice = this.voices.get(id);
+  private removeLiveVoice(id: string): void {
+    const voice = this.liveVoices.get(id);
     if (!voice) return;
     voice.gain.gain.rampTo(0, 1.5);
     setTimeout(() => {
@@ -148,22 +240,33 @@ export class SoundEngine {
       voice.filter.dispose();
       voice.gain.dispose();
     }, 2000);
-    this.voices.delete(id);
+    this.liveVoices.delete(id);
   }
 
-  getVoiceCount(): number {
-    return this.voices.size;
+  getLiveVoiceCount(): number {
+    return this.liveVoices.size;
+  }
+
+  getStoredVoiceCount(): number {
+    return this.storedVoices.size;
   }
 
   stop(): void {
     if (this.loopId !== null) cancelAnimationFrame(this.loopId);
-    for (const [, voice] of this.voices) {
+    for (const [, voice] of this.liveVoices) {
       voice.synth.dispose();
       voice.panner.dispose();
       voice.filter.dispose();
       voice.gain.dispose();
     }
-    this.voices.clear();
+    this.liveVoices.clear();
+    for (const [, sv] of this.storedVoices) {
+      sv.player.dispose();
+      sv.panner.dispose();
+      sv.filter.dispose();
+      sv.gain.dispose();
+    }
+    this.storedVoices.clear();
     this.droneOsc?.stop();
     this.droneOsc?.dispose();
     this.droneFilter?.dispose();

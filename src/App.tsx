@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { FaceTracker } from './engine/FaceTracker';
 import { SoundEngine } from './engine/SoundEngine';
-import type { TrackedFace } from './engine/types';
+import { AudioCapture } from './engine/AudioCapture';
+import { ParticipantStore } from './engine/ParticipantStore';
+import type { TrackedFace, Participant, ParticleEffect } from './engine/types';
 import SignalCanvas from './components/SignalCanvas';
+import ConstellationCanvas, { createSplatterEffect } from './components/ConstellationCanvas';
 import StatusOverlay from './components/StatusOverlay';
+
+const DWELL_TIME_MS = 1000;
 
 export default function App() {
   const [modelReady, setModelReady] = useState(false);
@@ -11,25 +16,42 @@ export default function App() {
   const [started, setStarted] = useState(false);
   const [faces, setFaces] = useState<TrackedFace[]>([]);
   const [activeFaces, setActiveFaces] = useState(0);
-  const [voiceCount, setVoiceCount] = useState(0);
+  const [liveVoiceCount, setLiveVoiceCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [dimensions, setDimensions] = useState({ w: window.innerWidth, h: window.innerHeight });
+
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [particleEffects, setParticleEffects] = useState<ParticleEffect[]>([]);
+  const [highlightedNode, setHighlightedNode] = useState<string | null>(null);
+  const [captureProgress, setCaptureProgress] = useState<Map<string, number>>(new Map());
+  const [isCapturing, setIsCapturing] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackerRef = useRef<FaceTracker | null>(null);
   const soundRef = useRef<SoundEngine | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const captureRef = useRef<AudioCapture | null>(null);
+  const storeRef = useRef<ParticipantStore | null>(null);
   const rafRef = useRef<number>(0);
+
+  const dwellTimers = useRef<Map<string, number>>(new Map());
+  const capturedFaces = useRef<Set<string>>(new Set());
+  const capturingFaceId = useRef<string | null>(null);
 
   useEffect(() => {
     const tracker = new FaceTracker();
     trackerRef.current = tracker;
     soundRef.current = new SoundEngine();
+    captureRef.current = new AudioCapture();
+    const store = new ParticipantStore();
+    storeRef.current = store;
 
-    tracker
-      .init()
-      .then(() => setModelReady(true))
-      .catch((err: Error) => setError('Model load failed: ' + err.message));
+    Promise.all([
+      tracker.init().then(() => setModelReady(true)),
+      store.init().then(() => {
+        setParticipants([...store.getAll()]);
+      }),
+    ]).catch((err: Error) => setError('Init failed: ' + err.message));
 
     const onResize = () =>
       setDimensions({ w: window.innerWidth, h: window.innerHeight });
@@ -39,6 +61,8 @@ export default function App() {
       window.removeEventListener('resize', onResize);
       tracker.destroy();
       soundRef.current?.stop();
+      captureRef.current?.destroy();
+      storeRef.current?.destroy();
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
       }
@@ -67,10 +91,93 @@ export default function App() {
   const handleStart = useCallback(async () => {
     const cameraOk = await startCamera();
     if (!cameraOk) return;
+
+    const micOk = await captureRef.current?.init();
+    if (!micOk) {
+      setError('Microphone access needed for audio capture');
+    }
+
     await soundRef.current?.start();
     setAudioStarted(true);
+
+    const store = storeRef.current;
+    if (store && soundRef.current) {
+      const existing = store.getAll();
+      for (const p of existing) {
+        const url = store.getAudioUrl(p);
+        await soundRef.current.addParticipantSound(p, url);
+      }
+    }
+
     setStarted(true);
   }, [startCamera]);
+
+  const captureParticipant = useCallback(async (face: TrackedFace) => {
+    if (!captureRef.current || !storeRef.current || !soundRef.current) return;
+    if (capturedFaces.current.has(face.id)) return;
+    if (capturingFaceId.current) return;
+
+    capturingFaceId.current = face.id;
+    setIsCapturing(true);
+    capturedFaces.current.add(face.id);
+
+    captureRef.current.startRecording();
+
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (!captureRef.current?.isRecording()) {
+          resolve();
+          return;
+        }
+        requestAnimationFrame(check);
+      };
+      check();
+    });
+
+    const { blob, duration } = await captureRef.current.stopRecording();
+
+    if (blob.size === 0) {
+      capturingFaceId.current = null;
+      setIsCapturing(false);
+      return;
+    }
+
+    const store = storeRef.current;
+    const faceDNA = ParticipantStore.generateFaceDNA(face.landmarks);
+
+    const participant: Participant = {
+      id: `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      faceDNA,
+      audioBlob: blob,
+      audioDuration: duration,
+      faceSnapshot: '',
+      landmarks: face.landmarks.map((l) => ({ x: l.x, y: l.y, z: l.z })),
+      hue: face.hue,
+      centerX: face.centerX,
+      centerY: face.centerY,
+      timestamp: Date.now(),
+      nodeX: 0.1 + Math.random() * 0.8,
+      nodeY: 0.1 + Math.random() * 0.8,
+      nodeVx: (Math.random() - 0.5) * 0.001,
+      nodeVy: (Math.random() - 0.5) * 0.001,
+    };
+
+    await store.add(participant);
+    setParticipants([...store.getAll()]);
+
+    const audioUrl = store.getAudioUrl(participant);
+    await soundRef.current.addParticipantSound(participant, audioUrl);
+
+    const splatter = createSplatterEffect(
+      participant.nodeX * dimensions.w,
+      participant.nodeY * dimensions.h,
+      participant.hue
+    );
+    setParticleEffects((prev) => [...prev, splatter]);
+
+    capturingFaceId.current = null;
+    setIsCapturing(false);
+  }, [dimensions.w, dimensions.h]);
 
   useEffect(() => {
     if (!started || !modelReady) return;
@@ -82,10 +189,46 @@ export default function App() {
         setActiveFaces(trackerRef.current.getActiveFaceCount());
 
         if (soundRef.current) {
-          soundRef.current.update(tracked, (f) =>
+          soundRef.current.updateLiveFaces(tracked, (f) =>
             trackerRef.current?.getFadeAmount(f) ?? 0
           );
-          setVoiceCount(soundRef.current.getVoiceCount());
+          setLiveVoiceCount(soundRef.current.getLiveVoiceCount());
+        }
+
+        const now = Date.now();
+        for (const face of tracked) {
+          if (!face.active) {
+            dwellTimers.current.delete(face.id);
+            continue;
+          }
+          if (capturedFaces.current.has(face.id)) continue;
+
+          if (!dwellTimers.current.has(face.id)) {
+            dwellTimers.current.set(face.id, now);
+          }
+          const dwellStart = dwellTimers.current.get(face.id)!;
+          const dwellMs = now - dwellStart;
+
+          setCaptureProgress((prev) => {
+            const next = new Map(prev);
+            next.set(face.id, Math.min(dwellMs / DWELL_TIME_MS, 1));
+            return next;
+          });
+
+          if (dwellMs >= DWELL_TIME_MS && !capturingFaceId.current) {
+            captureParticipant(face);
+          }
+        }
+
+        for (const [id] of dwellTimers.current) {
+          if (!tracked.find((f) => f.id === id && f.active)) {
+            dwellTimers.current.delete(id);
+            setCaptureProgress((prev) => {
+              const next = new Map(prev);
+              next.delete(id);
+              return next;
+            });
+          }
         }
       }
       rafRef.current = requestAnimationFrame(loop);
@@ -93,11 +236,31 @@ export default function App() {
     rafRef.current = requestAnimationFrame(loop);
 
     return () => cancelAnimationFrame(rafRef.current);
-  }, [started, modelReady]);
+  }, [started, modelReady, captureParticipant]);
 
   const getFade = useCallback(
     (face: TrackedFace): number => {
       return trackerRef.current?.getFadeAmount(face) ?? 0;
+    },
+    []
+  );
+
+  const handleNodeHover = useCallback(
+    (id: string | null) => {
+      if (highlightedNode && highlightedNode !== id) {
+        soundRef.current?.unhighlightParticipant(highlightedNode);
+      }
+      if (id) {
+        soundRef.current?.highlightParticipant(id);
+      }
+      setHighlightedNode(id);
+    },
+    [highlightedNode]
+  );
+
+  const handleNodeClick = useCallback(
+    (id: string) => {
+      soundRef.current?.highlightParticipant(id);
     },
     []
   );
@@ -115,6 +278,12 @@ export default function App() {
               Face detection &rarr; sound synthesis
               <br />
               Each presence becomes a signal
+              <br />
+              <span className="text-white/15">
+                {participants.length > 0
+                  ? `${participants.length} signals in constellation`
+                  : 'Be the first signal'}
+              </span>
             </p>
           </div>
 
@@ -140,7 +309,6 @@ export default function App() {
 
   return (
     <div className="fixed inset-0 bg-[#060608] overflow-hidden">
-      {/* Subtle ambient gradients */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
@@ -151,30 +319,47 @@ export default function App() {
         }}
       />
 
-      {/* Mirrored video feed - subtle background */}
+      {/* Background constellation of all participants */}
+      <ConstellationCanvas
+        participants={participants}
+        effects={particleEffects}
+        highlightedId={highlightedNode}
+        width={dimensions.w}
+        height={dimensions.h}
+        onHover={handleNodeHover}
+        onClick={handleNodeClick}
+      />
+
+      {/* Mirrored video feed */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted
-        className="absolute inset-0 w-full h-full object-cover opacity-[0.08] grayscale scale-x-[-1]"
+        className="absolute inset-0 w-full h-full object-cover opacity-[0.08] grayscale scale-x-[-1] pointer-events-none"
       />
 
-      {/* Main visual canvas */}
+      {/* Live face detection canvas */}
       <SignalCanvas
         faces={faces}
         getFade={getFade}
         width={dimensions.w}
         height={dimensions.h}
+        captureProgress={captureProgress}
+        isCapturing={isCapturing}
+        capturingFaceId={capturingFaceId.current}
       />
 
       {/* Status overlay */}
       <StatusOverlay
         faces={faces}
         activeFaces={activeFaces}
-        voiceCount={voiceCount}
+        liveVoiceCount={liveVoiceCount}
+        storedVoiceCount={soundRef.current?.getStoredVoiceCount() ?? 0}
+        participantCount={participants.length}
         modelReady={modelReady}
         audioStarted={audioStarted}
+        isCapturing={isCapturing}
         getFade={getFade}
       />
 

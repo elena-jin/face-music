@@ -4,9 +4,12 @@ import type { TrackedFace } from '../engine/types';
 interface Props {
   faces: TrackedFace[];
   activeFaces: number;
-  voiceCount: number;
+  liveVoiceCount: number;
+  storedVoiceCount: number;
+  participantCount: number;
   modelReady: boolean;
   audioStarted: boolean;
+  isCapturing: boolean;
   getFade: (face: TrackedFace) => number;
 }
 
@@ -19,9 +22,12 @@ interface Notification {
 export default function StatusOverlay({
   faces,
   activeFaces,
-  voiceCount,
+  liveVoiceCount,
+  storedVoiceCount,
+  participantCount,
   modelReady,
   audioStarted,
+  isCapturing,
   getFade,
 }: Props) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -73,10 +79,14 @@ export default function StatusOverlay({
           <StatusRow label="NEURAL" value={modelReady ? 'ACTIVE' : 'LOADING'} />
           <StatusRow label="AUDIO" value={audioStarted ? 'STREAMING' : 'STANDBY'} />
           <StatusRow label="FACES" value={String(activeFaces)} />
-          <StatusRow label="VOICES" value={String(voiceCount)} />
+          <StatusRow label="VOICES" value={String(liveVoiceCount)} />
           {ghostCount > 0 && (
             <StatusRow label="ECHOES" value={String(ghostCount)} />
           )}
+          <div className="mt-2 pt-2 border-t border-white/5">
+            <StatusRow label="STORED" value={String(storedVoiceCount)} />
+            <StatusRow label="TOTAL" value={String(participantCount)} />
+          </div>
         </div>
       </div>
 
@@ -106,6 +116,18 @@ export default function StatusOverlay({
           );
         })}
       </div>
+
+      {/* Capture indicator */}
+      {isCapturing && (
+        <div className="fixed top-1/2 right-8 z-50 -translate-y-1/2 font-mono">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-[9px] tracking-[0.3em] text-red-400/60 uppercase">
+              Recording
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Bottom-center notifications */}
       <div className="fixed bottom-12 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2">
@@ -141,6 +163,14 @@ export default function StatusOverlay({
             </span>
             <span className="text-[9px] text-white/40 uppercase tracking-[0.2em] mt-0.5">
               Tone.js
+            </span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[8px] text-white/15 uppercase tracking-[0.4em]">
+              Constellation
+            </span>
+            <span className="text-[9px] text-white/40 uppercase tracking-[0.2em] mt-0.5">
+              {participantCount} signals
             </span>
           </div>
         </div>

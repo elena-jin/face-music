@@ -17,10 +17,35 @@ export interface TrackedFace {
   active: boolean;
 }
 
-export interface FaceSignal {
-  face: TrackedFace;
-  pan: number;
-  register: number;
-  brightness: number;
-  intensity: number;
+export interface Participant {
+  id: string;
+  faceDNA: string;
+  audioBlob: Blob;
+  audioDuration: number;
+  faceSnapshot: string;
+  landmarks: FaceLandmark[];
+  hue: number;
+  centerX: number;
+  centerY: number;
+  timestamp: number;
+  nodeX: number;
+  nodeY: number;
+  nodeVx: number;
+  nodeVy: number;
+}
+
+export interface ParticleEffect {
+  id: number;
+  x: number;
+  y: number;
+  hue: number;
+  timestamp: number;
+  particles: Array<{
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    size: number;
+    alpha: number;
+  }>;
 }

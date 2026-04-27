@@ -6,6 +6,9 @@ interface Props {
   getFade: (face: TrackedFace) => number;
   width: number;
   height: number;
+  captureProgress?: Map<string, number>;
+  isCapturing?: boolean;
+  capturingFaceId?: string | null;
 }
 
 const FACE_MESH_OUTLINE = [
@@ -92,6 +95,63 @@ function drawFaceMesh(
   ctx.restore();
 }
 
+function drawCaptureRing(
+  ctx: CanvasRenderingContext2D,
+  face: TrackedFace,
+  progress: number,
+  isActive: boolean,
+  w: number,
+  h: number
+) {
+  const cx = face.centerX * w;
+  const cy = face.centerY * h;
+  const radius = face.faceWidth * w * 0.6;
+
+  ctx.save();
+
+  // progress arc
+  const startAngle = -Math.PI / 2;
+  const endAngle = startAngle + progress * Math.PI * 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, startAngle, endAngle);
+  ctx.strokeStyle = isActive
+    ? `hsla(${face.hue}, 90%, 75%, 0.8)`
+    : `hsla(${face.hue}, 60%, 65%, 0.4)`;
+  ctx.lineWidth = isActive ? 3 : 2;
+  ctx.stroke();
+
+  // label
+  if (progress > 0 && progress < 1) {
+    ctx.font = '9px monospace';
+    ctx.fillStyle = `hsla(${face.hue}, 60%, 70%, 0.6)`;
+    ctx.textAlign = 'center';
+    ctx.fillText('CAPTURING...', cx, cy + radius + 16);
+  } else if (isActive) {
+    ctx.font = '9px monospace';
+    ctx.fillStyle = `hsla(${face.hue}, 80%, 80%, 0.7)`;
+    ctx.textAlign = 'center';
+    ctx.fillText('RECORDING', cx, cy + radius + 16);
+
+    // pulse ring while recording
+    const pulse = (Math.sin(Date.now() * 0.008) + 1) * 0.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius + 4 + pulse * 4, 0, Math.PI * 2);
+    ctx.strokeStyle = `hsla(${face.hue}, 80%, 70%, ${0.15 + pulse * 0.2})`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // captured checkmark
+  if (progress >= 1 && !isActive) {
+    ctx.font = '9px monospace';
+    ctx.fillStyle = `hsla(${face.hue}, 60%, 70%, 0.5)`;
+    ctx.textAlign = 'center';
+    ctx.fillText('CAPTURED', cx, cy + radius + 16);
+  }
+
+  ctx.restore();
+}
+
 function drawConnectionLines(
   ctx: CanvasRenderingContext2D,
   faces: TrackedFace[],
@@ -154,31 +214,15 @@ function drawScanLine(
   ctx.fillRect(0, y - 40, w, 80);
 }
 
-function drawGrid(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number
-) {
-  ctx.save();
-  ctx.strokeStyle = 'hsla(200, 30%, 50%, 0.04)';
-  ctx.lineWidth = 0.5;
-  const step = 60;
-  for (let x = 0; x < w; x += step) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, h);
-    ctx.stroke();
-  }
-  for (let y = 0; y < h; y += step) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(w, y);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-export default function SignalCanvas({ faces, getFade, width, height }: Props) {
+export default function SignalCanvas({
+  faces,
+  getFade,
+  width,
+  height,
+  captureProgress,
+  isCapturing,
+  capturingFaceId,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const timeRef = useRef(0);
   const rafRef = useRef<number>(0);
@@ -196,7 +240,6 @@ export default function SignalCanvas({ faces, getFade, width, height }: Props) {
 
     ctx.clearRect(0, 0, width, height);
 
-    drawGrid(ctx, width, height);
     drawScanLine(ctx, width, height, timeRef.current);
     drawConnectionLines(ctx, faces, getFade, width, height);
 
@@ -205,11 +248,18 @@ export default function SignalCanvas({ faces, getFade, width, height }: Props) {
       if (fade > 0) {
         drawFaceMesh(ctx, face, fade, width, height);
       }
+
+      // capture progress ring
+      const progress = captureProgress?.get(face.id);
+      if (progress !== undefined && progress > 0) {
+        const isFaceCapturing = (isCapturing ?? false) && capturingFaceId === face.id;
+        drawCaptureRing(ctx, face, progress, isFaceCapturing, width, height);
+      }
     }
 
     timeRef.current++;
     rafRef.current = requestAnimationFrame(draw);
-  }, [faces, getFade, width, height]);
+  }, [faces, getFade, width, height, captureProgress, isCapturing, capturingFaceId]);
 
   useEffect(() => {
     rafRef.current = requestAnimationFrame(draw);
