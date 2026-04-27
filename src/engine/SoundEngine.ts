@@ -33,6 +33,7 @@ export class SoundEngine {
   private loopId: number | null = null;
   private droneOsc: Tone.Oscillator | null = null;
   private droneFilter: Tone.Filter | null = null;
+  private chorus: Tone.Chorus | null = null;
 
   async start(): Promise<void> {
     if (this.started) return;
@@ -40,9 +41,13 @@ export class SoundEngine {
 
     this.compressor = new Tone.Compressor(-24, 4).toDestination();
     this.masterGain = new Tone.Gain(0.7).connect(this.compressor);
-    this.reverb = new Tone.Reverb({ decay: 4, wet: 0.35 });
+    this.reverb = new Tone.Reverb({ decay: 6, wet: 0.45 });
     await this.reverb.generate();
     this.reverb.connect(this.masterGain);
+
+    this.chorus = new Tone.Chorus({ frequency: 0.3, delayTime: 3.5, depth: 0.4, wet: 0.2 });
+    this.chorus.connect(this.masterGain);
+    this.chorus.start();
 
     this.droneFilter = new Tone.Filter(200, 'lowpass').connect(this.masterGain);
     this.droneOsc = new Tone.Oscillator({ frequency: 'C2', type: 'sine', volume: -28 });
@@ -75,7 +80,7 @@ export class SoundEngine {
           } catch {
             // player may not be ready
           }
-          const interval = 4 + Math.random() * 12;
+          const interval = 6 + Math.random() * 18;
           sv.nextPlayTime = now + interval;
         }
       }
@@ -122,8 +127,8 @@ export class SoundEngine {
       const octave = OCTAVE_RANGE[Math.min(octaveIdx, OCTAVE_RANGE.length - 1)];
       const noteIdx = Math.floor(((face.centerX + face.centerY) * 2.5) % PENTATONIC.length);
       voice.lastNote = `${PENTATONIC[noteIdx]}${octave}`;
-      const brightness = 400 + face.velocity * 8000 + (1 - face.faceWidth) * 2000;
-      voice.filter.frequency.rampTo(Math.min(brightness, 6000), 0.3);
+      const brightness = 400 + face.velocity * 4000 + (1 - face.faceWidth) * 1500;
+      voice.filter.frequency.rampTo(Math.min(brightness, 4000), 0.5);
       voice.fadeTarget = fade;
     }
   }
@@ -137,21 +142,24 @@ export class SoundEngine {
 
     const gain = new Tone.Gain(0);
     const panner = new Tone.Panner((participant.centerX - 0.5) * 1.4).connect(gain);
-    const filter = new Tone.Filter(2000, 'lowpass').connect(panner);
+    const filter = new Tone.Filter(1800, 'lowpass', -12).connect(panner);
     gain.connect(this.reverb);
+    if (this.chorus && totalCount % 3 === 0) {
+      gain.connect(this.chorus);
+    }
 
     const player = new Tone.Player({
       url: audioUrl,
       loop: false,
       volume: baseVol,
-      fadeIn: 0.5,
-      fadeOut: 0.5,
+      fadeIn: 1.2,
+      fadeOut: 1.5,
     }).connect(filter);
 
     try {
       await Tone.loaded();
 
-      gain.gain.rampTo(0.12, 2);
+      gain.gain.rampTo(0.10, 4);
 
       this.storedVoices.set(participant.id, {
         player,
@@ -175,10 +183,10 @@ export class SoundEngine {
     const count = this.storedVoices.size;
     if (count === 0) return;
 
-    const targetGain = Math.max(0.02, 0.15 / Math.sqrt(count));
+    const targetGain = Math.max(0.015, 0.12 / Math.sqrt(count));
 
     for (const [, sv] of this.storedVoices) {
-      sv.gain.gain.rampTo(targetGain, 3);
+      sv.gain.gain.rampTo(targetGain, 5);
     }
   }
 
@@ -217,8 +225,8 @@ export class SoundEngine {
 
     const synth = new Tone.Synth({
       oscillator: { type: waveforms[waveIdx] as 'sine' | 'triangle' },
-      envelope: { attack: 0.8, decay: 0.4, sustain: 0.3, release: 2.5 },
-      volume: -18,
+      envelope: { attack: 1.2, decay: 0.8, sustain: 0.25, release: 3.5 },
+      volume: -22,
     }).connect(filter);
 
     const octave = OCTAVE_RANGE[Math.floor(face.centerY * OCTAVE_RANGE.length)] ?? 4;
@@ -273,6 +281,7 @@ export class SoundEngine {
     this.droneOsc?.stop();
     this.droneOsc?.dispose();
     this.droneFilter?.dispose();
+    this.chorus?.dispose();
     this.reverb?.dispose();
     this.compressor?.dispose();
     this.masterGain?.dispose();

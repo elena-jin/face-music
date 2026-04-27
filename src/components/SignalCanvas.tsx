@@ -6,9 +6,6 @@ interface Props {
   getFade: (face: TrackedFace) => number;
   width: number;
   height: number;
-  captureProgress?: Map<string, number>;
-  isCapturing?: boolean;
-  capturingFaceId?: string | null;
 }
 
 const FACE_MESH_OUTLINE = [
@@ -95,63 +92,6 @@ function drawFaceMesh(
   ctx.restore();
 }
 
-function drawCaptureRing(
-  ctx: CanvasRenderingContext2D,
-  face: TrackedFace,
-  progress: number,
-  isActive: boolean,
-  w: number,
-  h: number
-) {
-  const cx = face.centerX * w;
-  const cy = face.centerY * h;
-  const radius = face.faceWidth * w * 0.6;
-
-  ctx.save();
-
-  // progress arc
-  const startAngle = -Math.PI / 2;
-  const endAngle = startAngle + progress * Math.PI * 2;
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius, startAngle, endAngle);
-  ctx.strokeStyle = isActive
-    ? `hsla(${face.hue}, 90%, 75%, 0.8)`
-    : `hsla(${face.hue}, 60%, 65%, 0.4)`;
-  ctx.lineWidth = isActive ? 3 : 2;
-  ctx.stroke();
-
-  // label
-  if (progress > 0 && progress < 1) {
-    ctx.font = '9px monospace';
-    ctx.fillStyle = `hsla(${face.hue}, 60%, 70%, 0.6)`;
-    ctx.textAlign = 'center';
-    ctx.fillText('CAPTURING...', cx, cy + radius + 16);
-  } else if (isActive) {
-    ctx.font = '9px monospace';
-    ctx.fillStyle = `hsla(${face.hue}, 80%, 80%, 0.7)`;
-    ctx.textAlign = 'center';
-    ctx.fillText('RECORDING', cx, cy + radius + 16);
-
-    // pulse ring while recording
-    const pulse = (Math.sin(Date.now() * 0.008) + 1) * 0.5;
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius + 4 + pulse * 4, 0, Math.PI * 2);
-    ctx.strokeStyle = `hsla(${face.hue}, 80%, 70%, ${0.15 + pulse * 0.2})`;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
-
-  // captured checkmark
-  if (progress >= 1 && !isActive) {
-    ctx.font = '9px monospace';
-    ctx.fillStyle = `hsla(${face.hue}, 60%, 70%, 0.5)`;
-    ctx.textAlign = 'center';
-    ctx.fillText('CAPTURED', cx, cy + radius + 16);
-  }
-
-  ctx.restore();
-}
-
 function drawConnectionLines(
   ctx: CanvasRenderingContext2D,
   faces: TrackedFace[],
@@ -219,9 +159,6 @@ export default function SignalCanvas({
   getFade,
   width,
   height,
-  captureProgress,
-  isCapturing,
-  capturingFaceId,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const timeRef = useRef(0);
@@ -248,18 +185,11 @@ export default function SignalCanvas({
       if (fade > 0) {
         drawFaceMesh(ctx, face, fade, width, height);
       }
-
-      // capture progress ring
-      const progress = captureProgress?.get(face.id);
-      if (progress !== undefined && progress > 0) {
-        const isFaceCapturing = (isCapturing ?? false) && capturingFaceId === face.id;
-        drawCaptureRing(ctx, face, progress, isFaceCapturing, width, height);
-      }
     }
 
     timeRef.current++;
     rafRef.current = requestAnimationFrame(draw);
-  }, [faces, getFade, width, height, captureProgress, isCapturing, capturingFaceId]);
+  }, [faces, getFade, width, height]);
 
   useEffect(() => {
     rafRef.current = requestAnimationFrame(draw);

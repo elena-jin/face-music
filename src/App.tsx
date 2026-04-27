@@ -3,12 +3,32 @@ import { FaceTracker } from './engine/FaceTracker';
 import { SoundEngine } from './engine/SoundEngine';
 import { AudioCapture } from './engine/AudioCapture';
 import { ParticipantStore } from './engine/ParticipantStore';
-import type { TrackedFace, Participant, ParticleEffect } from './engine/types';
+import type { TrackedFace, Participant, ParticleEffect, ExpressionSnapshot, FaceLandmark } from './engine/types';
 import SignalCanvas from './components/SignalCanvas';
 import ConstellationCanvas, { createSplatterEffect } from './components/ConstellationCanvas';
 import StatusOverlay from './components/StatusOverlay';
+import GalleryView from './components/GalleryView';
 
 const DWELL_TIME_MS = 1000;
+const EXPRESSION_SAMPLE_INTERVAL = 200;
+
+function measureExpression(landmarks: FaceLandmark[]): { mouthOpen: number; eyebrowRaise: number; smile: number } {
+  if (landmarks.length < 468) return { mouthOpen: 0, eyebrowRaise: 0, smile: 0 };
+
+  const dist = (a: FaceLandmark, b: FaceLandmark) =>
+    Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
+
+  const faceH = dist(landmarks[10], landmarks[152]);
+  if (faceH < 0.001) return { mouthOpen: 0, eyebrowRaise: 0, smile: 0 };
+
+  const mouthOpen = dist(landmarks[13], landmarks[14]) / faceH;
+  const eyebrowRaise = (dist(landmarks[70], landmarks[33]) + dist(landmarks[300], landmarks[263])) / (2 * faceH);
+  const mouthWidth = dist(landmarks[61], landmarks[291]);
+  const mouthHeight = dist(landmarks[0], landmarks[17]);
+  const smile = mouthHeight > 0.001 ? mouthWidth / mouthHeight : 0;
+
+  return { mouthOpen, eyebrowRaise, smile };
+}
 
 export default function App() {
   const [modelReady, setModelReady] = useState(false);
@@ -23,7 +43,8 @@ export default function App() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [particleEffects, setParticleEffects] = useState<ParticleEffect[]>([]);
   const [highlightedNode, setHighlightedNode] = useState<string | null>(null);
-  const [captureProgress, setCaptureProgress] = useState<Map<string, number>>(new Map());
+  const [activeView, setActiveView] = useState<'live' | 'gallery'>('live');
+
   const [isCapturing, setIsCapturing] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -37,6 +58,8 @@ export default function App() {
   const dwellTimers = useRef<Map<string, number>>(new Map());
   const capturedFaces = useRef<Set<string>>(new Set());
   const capturingFaceId = useRef<string | null>(null);
+  const expressionSnapshots = useRef<Map<string, ExpressionSnapshot[]>>(new Map());
+  const lastExpressionSample = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     const tracker = new FaceTracker();
@@ -129,6 +152,14 @@ export default function App() {
       const store = storeRef.current;
       const faceDNA = ParticipantStore.generateFaceDNA(face.landmarks);
 
+      const snapshots = expressionSnapshots.current.get(face.id) ?? [];
+      const currentExpr = measureExpression(face.landmarks);
+      snapshots.push({
+        landmarks: face.landmarks.map((l) => ({ x: l.x, y: l.y, z: l.z })),
+        timestamp: Date.now(),
+        ...currentExpr,
+      });
+
       const participant: Participant = {
         id: `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         faceDNA,
@@ -136,6 +167,7 @@ export default function App() {
         audioDuration: duration,
         faceSnapshot: '',
         landmarks: face.landmarks.map((l) => ({ x: l.x, y: l.y, z: l.z })),
+        expressions: snapshots,
         hue: face.hue,
         centerX: face.centerX,
         centerY: face.centerY,
@@ -145,6 +177,9 @@ export default function App() {
         nodeVx: (Math.random() - 0.5) * 0.001,
         nodeVy: (Math.random() - 0.5) * 0.001,
       };
+
+      expressionSnapshots.current.delete(face.id);
+      lastExpressionSample.current.delete(face.id);
 
       await store.add(participant);
       setParticipants([...store.getAll()]);
@@ -194,11 +229,19 @@ export default function App() {
           const dwellStart = dwellTimers.current.get(face.id)!;
           const dwellMs = now - dwellStart;
 
-          setCaptureProgress((prev) => {
-            const next = new Map(prev);
-            next.set(face.id, Math.min(dwellMs / DWELL_TIME_MS, 1));
-            return next;
-          });
+          const lastSample = lastExpressionSample.current.get(face.id) ?? 0;
+          if (now - lastSample >= EXPRESSION_SAMPLE_INTERVAL && face.landmarks.length >= 468) {
+            lastExpressionSample.current.set(face.id, now);
+            const expr = measureExpression(face.landmarks);
+            const snaps = expressionSnapshots.current.get(face.id) ?? [];
+            snaps.push({
+              landmarks: face.landmarks.map((l) => ({ x: l.x, y: l.y, z: l.z })),
+              timestamp: now,
+              ...expr,
+            });
+            if (snaps.length > 15) snaps.splice(0, snaps.length - 15);
+            expressionSnapshots.current.set(face.id, snaps);
+          }
 
           if (dwellMs >= DWELL_TIME_MS && !capturingFaceId.current) {
             captureParticipant(face);
@@ -208,11 +251,6 @@ export default function App() {
         for (const [id] of dwellTimers.current) {
           if (!tracked.find((f) => f.id === id && f.active)) {
             dwellTimers.current.delete(id);
-            setCaptureProgress((prev) => {
-              const next = new Map(prev);
-              next.delete(id);
-              return next;
-            });
           }
         }
       }
@@ -253,6 +291,14 @@ export default function App() {
     },
     []
   );
+
+  const handleGalleryPlay = useCallback((id: string) => {
+    soundRef.current?.highlightParticipant(id);
+  }, []);
+
+  const handleGalleryStop = useCallback((id: string) => {
+    soundRef.current?.unhighlightParticipant(id);
+  }, []);
 
   // Connect stream to video element once both are available
   useEffect(() => {
@@ -316,49 +362,82 @@ export default function App() {
         }}
       />
 
-      {/* Background constellation of all participants */}
-      <ConstellationCanvas
-        participants={participants}
-        effects={particleEffects}
-        highlightedId={highlightedNode}
-        width={dimensions.w}
-        height={dimensions.h}
-        onHover={handleNodeHover}
-        onClick={handleNodeClick}
-      />
+      {activeView === 'live' ? (
+        <>
+          {/* Background constellation of all participants */}
+          <ConstellationCanvas
+            participants={participants}
+            effects={particleEffects}
+            highlightedId={highlightedNode}
+            width={dimensions.w}
+            height={dimensions.h}
+            onHover={handleNodeHover}
+            onClick={handleNodeClick}
+          />
 
-      {/* Mirrored video feed */}
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted
-        className="absolute inset-0 w-full h-full object-cover opacity-[0.08] grayscale scale-x-[-1] pointer-events-none"
-      />
+          {/* Mirrored video feed */}
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="absolute inset-0 w-full h-full object-cover opacity-[0.25] grayscale scale-x-[-1] pointer-events-none"
+          />
 
-      {/* Live face detection canvas */}
-      <SignalCanvas
-        faces={faces}
-        getFade={getFade}
-        width={dimensions.w}
-        height={dimensions.h}
-        captureProgress={captureProgress}
-        isCapturing={isCapturing}
-        capturingFaceId={capturingFaceId.current}
-      />
+          {/* Live face detection canvas */}
+          <SignalCanvas
+            faces={faces}
+            getFade={getFade}
+            width={dimensions.w}
+            height={dimensions.h}
+          />
 
-      {/* Status overlay */}
-      <StatusOverlay
-        faces={faces}
-        activeFaces={activeFaces}
-        liveVoiceCount={liveVoiceCount}
-        storedVoiceCount={soundRef.current?.getStoredVoiceCount() ?? 0}
-        participantCount={participants.length}
-        modelReady={modelReady}
-        audioStarted={audioStarted}
-        isCapturing={isCapturing}
-        getFade={getFade}
-      />
+          {/* Status overlay */}
+          <StatusOverlay
+            faces={faces}
+            activeFaces={activeFaces}
+            liveVoiceCount={liveVoiceCount}
+            storedVoiceCount={soundRef.current?.getStoredVoiceCount() ?? 0}
+            participantCount={participants.length}
+            modelReady={modelReady}
+            audioStarted={audioStarted}
+            isCapturing={isCapturing}
+            getFade={getFade}
+          />
+        </>
+      ) : (
+        <GalleryView
+          participants={participants}
+          width={dimensions.w}
+          height={dimensions.h}
+          onPlaySound={handleGalleryPlay}
+          onStopSound={handleGalleryStop}
+        />
+      )}
+
+      {/* View toggle */}
+      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] flex gap-1 font-mono">
+        <button
+          onClick={() => setActiveView('live')}
+          className={`px-4 py-2 text-[9px] tracking-[0.3em] uppercase border transition-all duration-300 ${
+            activeView === 'live'
+              ? 'border-white/20 text-white/60 bg-white/5'
+              : 'border-white/5 text-white/20 hover:text-white/40'
+          }`}
+        >
+          Live
+        </button>
+        <button
+          onClick={() => setActiveView('gallery')}
+          className={`px-4 py-2 text-[9px] tracking-[0.3em] uppercase border transition-all duration-300 ${
+            activeView === 'gallery'
+              ? 'border-white/20 text-white/60 bg-white/5'
+              : 'border-white/5 text-white/20 hover:text-white/40'
+          }`}
+        >
+          Gallery {participants.length > 0 && `(${participants.length})`}
+        </button>
+      </div>
 
       {/* Error toast */}
       {error && (

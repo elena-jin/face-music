@@ -17,6 +17,14 @@ export interface TrackedFace {
   active: boolean;
 }
 
+export interface ExpressionSnapshot {
+  landmarks: FaceLandmark[];
+  timestamp: number;
+  mouthOpen: number;
+  eyebrowRaise: number;
+  smile: number;
+}
+
 export interface Participant {
   id: string;
   faceDNA: string;
@@ -24,6 +32,7 @@ export interface Participant {
   audioDuration: number;
   faceSnapshot: string;
   landmarks: FaceLandmark[];
+  expressions: ExpressionSnapshot[];
   hue: number;
   centerX: number;
   centerY: number;
