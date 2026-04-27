@@ -229,15 +229,17 @@ export default function App() {
 
   const handleNodeHover = useCallback(
     (id: string | null) => {
-      if (highlightedNode && highlightedNode !== id) {
-        soundRef.current?.unhighlightParticipant(highlightedNode);
-      }
-      if (id) {
-        soundRef.current?.highlightParticipant(id);
-      }
-      setHighlightedNode(id);
+      setHighlightedNode((prev) => {
+        if (prev && prev !== id) {
+          soundRef.current?.unhighlightParticipant(prev);
+        }
+        if (id) {
+          soundRef.current?.highlightParticipant(id);
+        }
+        return id;
+      });
     },
-    [highlightedNode]
+    []
   );
 
   const handleNodeClick = useCallback(

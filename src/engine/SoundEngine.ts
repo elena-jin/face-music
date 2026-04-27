@@ -132,23 +132,23 @@ export class SoundEngine {
     if (!this.started || !this.reverb) return;
     if (this.storedVoices.has(participant.id)) return;
 
+    const totalCount = this.storedVoices.size + 1;
+    const baseVol = Math.max(-40, -18 - totalCount * 0.5);
+
+    const gain = new Tone.Gain(0);
+    const panner = new Tone.Panner((participant.centerX - 0.5) * 1.4).connect(gain);
+    const filter = new Tone.Filter(2000, 'lowpass').connect(panner);
+    gain.connect(this.reverb);
+
+    const player = new Tone.Player({
+      url: audioUrl,
+      loop: false,
+      volume: baseVol,
+      fadeIn: 0.5,
+      fadeOut: 0.5,
+    }).connect(filter);
+
     try {
-      const totalCount = this.storedVoices.size + 1;
-      const baseVol = Math.max(-40, -18 - totalCount * 0.5);
-
-      const gain = new Tone.Gain(0);
-      const panner = new Tone.Panner((participant.centerX - 0.5) * 1.4).connect(gain);
-      const filter = new Tone.Filter(2000, 'lowpass').connect(panner);
-      gain.connect(this.reverb);
-
-      const player = new Tone.Player({
-        url: audioUrl,
-        loop: false,
-        volume: baseVol,
-        fadeIn: 0.5,
-        fadeOut: 0.5,
-      }).connect(filter);
-
       await Tone.loaded();
 
       gain.gain.rampTo(0.12, 2);
@@ -164,7 +164,10 @@ export class SoundEngine {
 
       this.rebalanceStoredVoices();
     } catch {
-      // audio load failed silently
+      try { player.dispose(); } catch { /* ignore */ }
+      try { filter.dispose(); } catch { /* ignore */ }
+      try { panner.dispose(); } catch { /* ignore */ }
+      try { gain.dispose(); } catch { /* ignore */ }
     }
   }
 
