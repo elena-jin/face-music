@@ -317,7 +317,7 @@ export default function App() {
       videoRef.current.srcObject = streamRef.current;
       videoRef.current.play().catch(() => {});
     }
-  }, [started]);
+  }, [started, activeView]);
 
   if (!started) {
     return (

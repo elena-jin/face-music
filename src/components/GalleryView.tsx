@@ -133,6 +133,17 @@ export default function GalleryView({
     [participants]
   );
 
+  const onStopSoundRef = useRef(onStopSound);
+  onStopSoundRef.current = onStopSound;
+
+  useEffect(() => {
+    return () => {
+      if (hoveredIdRef.current) {
+        onStopSoundRef.current(hoveredIdRef.current);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
