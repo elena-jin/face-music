@@ -70,11 +70,13 @@ export default function App() {
     storeRef.current = store;
 
     Promise.all([
-      tracker.init().then(() => setModelReady(true)),
+      tracker.init(),
       store.init().then(() => {
         setParticipants([...store.getAll()]);
       }),
-    ]).catch((err: Error) => setError('Init failed: ' + err.message));
+    ])
+      .then(() => setModelReady(true))
+      .catch((err: Error) => setError('Init failed: ' + err.message));
 
     const onResize = () =>
       setDimensions({ w: window.innerWidth, h: window.innerHeight });
