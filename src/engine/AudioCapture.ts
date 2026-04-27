@@ -45,7 +45,13 @@ export class AudioCapture {
     this.recording = true;
 
     const chunks: Blob[] = [];
-    const recorder = new MediaRecorder(this.stream, { mimeType: this.mimeType });
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(this.stream, { mimeType: this.mimeType });
+    } catch {
+      this.recording = false;
+      return { blob: new Blob(), duration: 0 };
+    }
     const startTime = Date.now();
 
     this.pendingResult = new Promise<{ blob: Blob; duration: number }>((resolve) => {

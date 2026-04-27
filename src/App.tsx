@@ -116,51 +116,49 @@ export default function App() {
     capturingFaceId.current = face.id;
     setIsCapturing(true);
 
-    const { blob, duration } = await captureRef.current.capture();
+    try {
+      const { blob, duration } = await captureRef.current.capture();
 
-    if (blob.size === 0) {
+      if (blob.size === 0) return;
+
+      capturedFaces.current.add(face.id);
+
+      const store = storeRef.current;
+      const faceDNA = ParticipantStore.generateFaceDNA(face.landmarks);
+
+      const participant: Participant = {
+        id: `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        faceDNA,
+        audioBlob: blob,
+        audioDuration: duration,
+        faceSnapshot: '',
+        landmarks: face.landmarks.map((l) => ({ x: l.x, y: l.y, z: l.z })),
+        hue: face.hue,
+        centerX: face.centerX,
+        centerY: face.centerY,
+        timestamp: Date.now(),
+        nodeX: 0.1 + Math.random() * 0.8,
+        nodeY: 0.1 + Math.random() * 0.8,
+        nodeVx: (Math.random() - 0.5) * 0.001,
+        nodeVy: (Math.random() - 0.5) * 0.001,
+      };
+
+      await store.add(participant);
+      setParticipants([...store.getAll()]);
+
+      const audioUrl = store.getAudioUrl(participant);
+      await soundRef.current.addParticipantSound(participant, audioUrl);
+
+      const splatter = createSplatterEffect(
+        participant.nodeX * dimensions.w,
+        participant.nodeY * dimensions.h,
+        participant.hue
+      );
+      setParticleEffects((prev) => [...prev, splatter]);
+    } finally {
       capturingFaceId.current = null;
       setIsCapturing(false);
-      return;
     }
-
-    capturedFaces.current.add(face.id);
-
-    const store = storeRef.current;
-    const faceDNA = ParticipantStore.generateFaceDNA(face.landmarks);
-
-    const participant: Participant = {
-      id: `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      faceDNA,
-      audioBlob: blob,
-      audioDuration: duration,
-      faceSnapshot: '',
-      landmarks: face.landmarks.map((l) => ({ x: l.x, y: l.y, z: l.z })),
-      hue: face.hue,
-      centerX: face.centerX,
-      centerY: face.centerY,
-      timestamp: Date.now(),
-      nodeX: 0.1 + Math.random() * 0.8,
-      nodeY: 0.1 + Math.random() * 0.8,
-      nodeVx: (Math.random() - 0.5) * 0.001,
-      nodeVy: (Math.random() - 0.5) * 0.001,
-    };
-
-    await store.add(participant);
-    setParticipants([...store.getAll()]);
-
-    const audioUrl = store.getAudioUrl(participant);
-    await soundRef.current.addParticipantSound(participant, audioUrl);
-
-    const splatter = createSplatterEffect(
-      participant.nodeX * dimensions.w,
-      participant.nodeY * dimensions.h,
-      participant.hue
-    );
-    setParticleEffects((prev) => [...prev, splatter]);
-
-    capturingFaceId.current = null;
-    setIsCapturing(false);
   }, [dimensions.w, dimensions.h]);
 
   useEffect(() => {
@@ -248,6 +246,14 @@ export default function App() {
     },
     []
   );
+
+  // Connect stream to video element once both are available
+  useEffect(() => {
+    if (started && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [started]);
 
   if (!started) {
     return (
