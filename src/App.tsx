@@ -119,7 +119,10 @@ export default function App() {
     try {
       const { blob, duration } = await captureRef.current.capture();
 
-      if (blob.size === 0) return;
+      if (blob.size === 0) {
+        capturedFaces.current.add(face.id);
+        return;
+      }
 
       capturedFaces.current.add(face.id);
 
@@ -227,17 +230,19 @@ export default function App() {
     []
   );
 
+  const highlightedNodeRef = useRef<string | null>(null);
+
   const handleNodeHover = useCallback(
     (id: string | null) => {
-      setHighlightedNode((prev) => {
-        if (prev && prev !== id) {
-          soundRef.current?.unhighlightParticipant(prev);
-        }
-        if (id) {
-          soundRef.current?.highlightParticipant(id);
-        }
-        return id;
-      });
+      const prev = highlightedNodeRef.current;
+      if (prev && prev !== id) {
+        soundRef.current?.unhighlightParticipant(prev);
+      }
+      if (id) {
+        soundRef.current?.highlightParticipant(id);
+      }
+      highlightedNodeRef.current = id;
+      setHighlightedNode(id);
     },
     []
   );
