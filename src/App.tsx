@@ -46,7 +46,7 @@ export default function App() {
     };
   }, []);
 
-  const startCamera = useCallback(async () => {
+  const startCamera = useCallback(async (): Promise<boolean> => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -56,14 +56,17 @@ export default function App() {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
       }
+      return true;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       setError('Camera access denied: ' + message);
+      return false;
     }
   }, []);
 
   const handleStart = useCallback(async () => {
-    await startCamera();
+    const cameraOk = await startCamera();
+    if (!cameraOk) return;
     await soundRef.current?.start();
     setAudioStarted(true);
     setStarted(true);

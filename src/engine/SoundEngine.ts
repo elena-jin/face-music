@@ -157,9 +157,13 @@ export class SoundEngine {
 
   stop(): void {
     if (this.loopId !== null) cancelAnimationFrame(this.loopId);
-    for (const [id] of this.voices) {
-      this.removeVoice(id);
+    for (const [, voice] of this.voices) {
+      voice.synth.dispose();
+      voice.panner.dispose();
+      voice.filter.dispose();
+      voice.gain.dispose();
     }
+    this.voices.clear();
     this.droneOsc?.stop();
     this.droneOsc?.dispose();
     this.droneFilter?.dispose();
