@@ -92,11 +92,6 @@ export default function App() {
     const cameraOk = await startCamera();
     if (!cameraOk) return;
 
-    const micOk = await captureRef.current?.init();
-    if (!micOk) {
-      setError('Microphone access needed for audio capture');
-    }
-
     await soundRef.current?.start();
     setAudioStarted(true);
 
@@ -116,6 +111,7 @@ export default function App() {
     if (!captureRef.current || !storeRef.current || !soundRef.current) return;
     if (capturedFaces.current.has(face.id)) return;
     if (capturingFaceId.current) return;
+    if (captureRef.current.hasFailedInit()) return;
 
     capturingFaceId.current = face.id;
     setIsCapturing(true);

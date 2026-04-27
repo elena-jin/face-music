@@ -4,31 +4,48 @@ export class AudioCapture {
   private stream: MediaStream | null = null;
   private recording = false;
   private pendingResult: Promise<{ blob: Blob; duration: number }> | null = null;
+  private initFailed = false;
+  private mimeType = 'audio/webm';
 
-  async init(): Promise<boolean> {
+  private async ensureStream(): Promise<boolean> {
+    if (this.stream) return true;
+    if (this.initFailed) return false;
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: { sampleRate: 44100, echoCancellation: true, noiseSuppression: true },
       });
+      this.mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
       return true;
     } catch {
+      this.initFailed = true;
       return false;
     }
   }
 
-  capture(): Promise<{ blob: Blob; duration: number }> {
-    if (this.recording || !this.stream) {
-      return Promise.resolve({ blob: new Blob(), duration: 0 });
+  isAvailable(): boolean {
+    return this.stream !== null && !this.initFailed;
+  }
+
+  hasFailedInit(): boolean {
+    return this.initFailed;
+  }
+
+  async capture(): Promise<{ blob: Blob; duration: number }> {
+    if (this.recording) {
+      return { blob: new Blob(), duration: 0 };
+    }
+
+    const ready = await this.ensureStream();
+    if (!ready || !this.stream) {
+      return { blob: new Blob(), duration: 0 };
     }
 
     this.recording = true;
 
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : 'audio/webm';
-
     const chunks: Blob[] = [];
-    const recorder = new MediaRecorder(this.stream, { mimeType });
+    const recorder = new MediaRecorder(this.stream, { mimeType: this.mimeType });
     const startTime = Date.now();
 
     this.pendingResult = new Promise<{ blob: Blob; duration: number }>((resolve) => {
@@ -38,7 +55,7 @@ export class AudioCapture {
 
       recorder.onstop = () => {
         const duration = Math.min(Date.now() - startTime, MAX_DURATION_MS);
-        const blob = new Blob(chunks, { type: 'audio/webm;codecs=opus' });
+        const blob = new Blob(chunks, { type: this.mimeType });
         this.recording = false;
         this.pendingResult = null;
         resolve({ blob, duration });
