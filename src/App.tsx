@@ -9,7 +9,6 @@ import ConstellationCanvas, { createSplatterEffect } from './components/Constell
 import StatusOverlay from './components/StatusOverlay';
 import GalleryView from './components/GalleryView';
 
-const CAPTURE_COOLDOWN_MS = 1000;
 const EXPRESSION_SAMPLE_INTERVAL = 200;
 
 function measureExpression(landmarks: FaceLandmark[]): { mouthOpen: number; eyebrowRaise: number; smile: number } {
@@ -57,7 +56,6 @@ export default function App() {
   const storeRef = useRef<ParticipantStore | null>(null);
   const rafRef = useRef<number>(0);
 
-  const lastCaptureTime = useRef<Map<string, number>>(new Map());
   const capturedFaces = useRef<Set<string>>(new Set());
   const capturingFaceId = useRef<string | null>(null);
   const expressionSnapshots = useRef<Map<string, ExpressionSnapshot[]>>(new Map());
@@ -305,10 +303,8 @@ export default function App() {
             expressionSnapshots.current.set(face.id, snaps);
           }
 
-          // Capture every detected face, with cooldown per face
-          const lastCapture = lastCaptureTime.current.get(face.id) ?? 0;
-          if (now - lastCapture >= CAPTURE_COOLDOWN_MS && !capturingFaceId.current) {
-            lastCaptureTime.current.set(face.id, now);
+          // Capture each face once, immediately on detection
+          if (!capturedFaces.current.has(face.id) && !capturingFaceId.current) {
             captureParticipant(face);
           }
         }
