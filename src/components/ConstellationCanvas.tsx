@@ -326,6 +326,11 @@ export default function ConstellationCanvas({
 
     let raf: number;
     const render = () => {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      ctx.scale(dpr, dpr);
+
       animEffects.current = updateParticles(animEffects.current);
       drawConstellation(
         ctx,
@@ -347,10 +352,8 @@ export default function ConstellationCanvas({
   return (
     <canvas
       ref={canvasRef}
-      width={width}
-      height={height}
       className="absolute inset-0"
-      style={{ cursor: highlightedId ? 'pointer' : 'default' }}
+      style={{ width, height, cursor: highlightedId ? 'pointer' : 'default' }}
       onPointerMove={handlePointerMove}
       onClick={handleClick}
     />

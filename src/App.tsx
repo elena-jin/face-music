@@ -310,11 +310,11 @@ export default function App() {
   );
 
   const handleGalleryPlay = useCallback((id: string) => {
-    soundRef.current?.highlightParticipant(id);
+    soundRef.current?.highlightParticipant(id, true);
   }, []);
 
   const handleGalleryStop = useCallback((id: string) => {
-    soundRef.current?.unhighlightParticipant(id);
+    soundRef.current?.unhighlightParticipant(id, true);
   }, []);
 
   // Start/stop gallery melody based on view, clear live voices when leaving live

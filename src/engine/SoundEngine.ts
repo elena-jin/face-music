@@ -49,6 +49,7 @@ export class SoundEngine {
   private droneOsc: Tone.Oscillator | null = null;
   private droneFilter: Tone.Filter | null = null;
   private chorus: Tone.Chorus | null = null;
+  private userHighlightedIds: Set<string> = new Set();
 
   async start(): Promise<void> {
     if (this.started) return;
@@ -201,7 +202,8 @@ export class SoundEngine {
     }
   }
 
-  highlightParticipant(id: string): void {
+  highlightParticipant(id: string, isUserAction = false): void {
+    if (isUserAction) this.userHighlightedIds.add(id);
     const sv = this.storedVoices.get(id);
     if (!sv || !sv.player.loaded) return;
     sv.gain.gain.rampTo(0.4, 0.3);
@@ -215,7 +217,9 @@ export class SoundEngine {
     }
   }
 
-  unhighlightParticipant(id: string): void {
+  unhighlightParticipant(id: string, isUserAction = false): void {
+    if (isUserAction) this.userHighlightedIds.delete(id);
+    if (!isUserAction && this.userHighlightedIds.has(id)) return;
     const sv = this.storedVoices.get(id);
     if (!sv) return;
     const count = this.storedVoices.size;
