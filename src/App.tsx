@@ -47,6 +47,7 @@ export default function App() {
 
   const [isCapturing, setIsCapturing] = useState(false);
   const [captureGlowId, setCaptureGlowId] = useState<string | null>(null);
+  const [captureFlash, setCaptureFlash] = useState<{ src: string; x: number; y: number } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackerRef = useRef<FaceTracker | null>(null);
@@ -133,17 +134,65 @@ export default function App() {
     setStarted(true);
   }, [startCamera]);
 
+  const captureFaceImage = useCallback((face: TrackedFace): string => {
+    const video = videoRef.current;
+    if (!video || video.videoWidth === 0) return '';
+    try {
+      const size = 128;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return '';
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      const cx = face.centerX * vw;
+      const cy = face.centerY * vh;
+      const fw = face.faceWidth * vw * 1.6;
+      const fh = fw;
+      const sx = Math.max(0, cx - fw / 2);
+      const sy = Math.max(0, cy - fh / 2);
+      ctx.save();
+      ctx.translate(size, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, sx, sy, fw, fh, 0, 0, size, size);
+      ctx.restore();
+      return canvas.toDataURL('image/jpeg', 0.7);
+    } catch {
+      return '';
+    }
+  }, []);
+
   const captureParticipant = useCallback(async (face: TrackedFace) => {
     if (!captureRef.current || !storeRef.current || !soundRef.current) return;
     if (capturedFaces.current.has(face.id)) return;
     if (capturingFaceId.current) return;
-    if (captureRef.current.hasFailedInit()) return;
 
     capturingFaceId.current = face.id;
     setIsCapturing(true);
 
     try {
-      const { blob, duration } = await captureRef.current.capture();
+      const faceDNA = ParticipantStore.generateFaceDNA(face.landmarks);
+      const currentExpr = measureExpression(face.landmarks);
+      const isMajor = currentExpr.smile > 3.5;
+
+      let hash = 0;
+      for (let i = 0; i < faceDNA.length; i++) {
+        hash = ((hash << 5) - hash + faceDNA.charCodeAt(i)) | 0;
+      }
+      const abs = Math.abs(hash);
+      const noteIdx = abs % 5;
+      const octave = [3, 4, 5][abs % 3];
+      const waveform: 'sine' | 'triangle' = abs % 2 === 0 ? 'sine' : 'triangle';
+
+      const { blob, duration } = await captureRef.current.capture({
+        noteIdx,
+        octave,
+        waveform,
+        isMajor,
+        pan: face.centerX - 0.5,
+        brightness: 800 + currentExpr.smile * 200 + currentExpr.mouthOpen * 1000,
+      });
 
       if (blob.size === 0) {
         capturedFaces.current.add(face.id);
@@ -153,10 +202,9 @@ export default function App() {
       capturedFaces.current.add(face.id);
 
       const store = storeRef.current;
-      const faceDNA = ParticipantStore.generateFaceDNA(face.landmarks);
+      const faceSnapshot = captureFaceImage(face);
 
       const snapshots = expressionSnapshots.current.get(face.id) ?? [];
-      const currentExpr = measureExpression(face.landmarks);
       snapshots.push({
         landmarks: face.landmarks.map((l) => ({ x: l.x, y: l.y, z: l.z })),
         timestamp: Date.now(),
@@ -168,7 +216,7 @@ export default function App() {
         faceDNA,
         audioBlob: blob,
         audioDuration: duration,
-        faceSnapshot: '',
+        faceSnapshot,
         landmarks: face.landmarks.map((l) => ({ x: l.x, y: l.y, z: l.z })),
         expressions: snapshots,
         hue: face.hue,
@@ -199,11 +247,16 @@ export default function App() {
 
       setCaptureGlowId(participant.id);
       setTimeout(() => setCaptureGlowId(null), 1600);
+
+      if (faceSnapshot) {
+        setCaptureFlash({ src: faceSnapshot, x: face.centerX, y: face.centerY });
+        setTimeout(() => setCaptureFlash(null), 2500);
+      }
     } finally {
       capturingFaceId.current = null;
       setIsCapturing(false);
     }
-  }, [dimensions.w, dimensions.h]);
+  }, [dimensions.w, dimensions.h, captureFaceImage]);
 
   useEffect(() => {
     if (!started || !modelReady) return;
@@ -380,7 +433,7 @@ export default function App() {
 
           {modelReady && (
             <p className="text-[8px] tracking-[0.3em] text-white/15 uppercase mt-6">
-              Requires camera &amp; audio permissions
+              Requires camera permission
             </p>
           )}
         </div>
@@ -430,6 +483,32 @@ export default function App() {
             width={dimensions.w}
             height={dimensions.h}
           />
+
+          {/* Capture flash overlay */}
+          {captureFlash && (
+            <div
+              className="absolute pointer-events-none z-20 animate-pulse"
+              style={{
+                left: `${captureFlash.x * 100}%`,
+                top: `${captureFlash.y * 100}%`,
+                transform: 'translate(-50%, -50%)',
+                animation: 'captureFlash 2.5s ease-out forwards',
+              }}
+            >
+              <div className="relative">
+                <img
+                  src={captureFlash.src}
+                  alt="captured"
+                  className="w-24 h-24 rounded-full object-cover border-2 border-white/40"
+                  style={{ filter: 'brightness(1.2) contrast(1.1)' }}
+                />
+                <div className="absolute inset-0 rounded-full border-2 border-white/60 animate-ping" />
+                <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[8px] tracking-[0.3em] text-white/60 uppercase whitespace-nowrap font-mono">
+                  Signal captured
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Status overlay */}
           <StatusOverlay

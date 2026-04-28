@@ -44,6 +44,7 @@ function drawConstellation(
   highlightedId: string | null,
   captureGlowId: string | null,
   captureGlowStart: number,
+  faceImages: Map<string, HTMLImageElement>,
   w: number,
   h: number,
   time: number
@@ -153,13 +154,32 @@ function drawConstellation(
     ctx.fillStyle = `hsla(${p.hue}, 60%, 65%, ${isHighlighted ? 0.9 : 0.5 * pulse})`;
     ctx.fill();
 
-    // mini face wireframe on all nodes
-    if (p.landmarks && p.landmarks.length > 0) {
+    // face photo on node
+    if (faceImages.has(p.id)) {
+      const img = faceImages.get(p.id)!;
+      if (img.complete && img.naturalWidth > 0) {
+        const imgSize = isHighlighted ? 48 : 20;
+        const imgAlpha = isHighlighted ? 0.85 : 0.4 * pulse;
+        ctx.save();
+        ctx.globalAlpha = imgAlpha;
+        ctx.beginPath();
+        ctx.arc(x, y, imgSize / 2, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(img, x - imgSize / 2, y - imgSize / 2, imgSize, imgSize);
+        ctx.restore();
+
+        ctx.beginPath();
+        ctx.arc(x, y, imgSize / 2, 0, Math.PI * 2);
+        ctx.strokeStyle = `hsla(${p.hue}, 70%, 65%, ${isHighlighted ? 0.6 : 0.2 * pulse})`;
+        ctx.lineWidth = isHighlighted ? 1.5 : 0.8;
+        ctx.stroke();
+      }
+    } else if (p.landmarks && p.landmarks.length > 0) {
       const faceAlpha = isHighlighted ? 0.6 : 0.2 * pulse;
       drawMiniFace(ctx, p, x, y - (isHighlighted ? 0 : 2), isHighlighted ? 60 : 30, faceAlpha);
     }
 
-    if (isHighlighted) {
+    if (isHighlighted && !faceImages.has(p.id)) {
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
       ctx.strokeStyle = `hsla(${p.hue}, 80%, 80%, 0.6)`;
@@ -270,6 +290,7 @@ export default function ConstellationCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animEffects = useRef<ParticleEffect[]>([]);
   const captureGlowStartRef = useRef(0);
+  const faceImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
 
   useEffect(() => {
     if (captureGlowId) {
@@ -280,6 +301,16 @@ export default function ConstellationCanvas({
   useEffect(() => {
     animEffects.current = effects;
   }, [effects]);
+
+  useEffect(() => {
+    for (const p of participants) {
+      if (p.faceSnapshot && !faceImagesRef.current.has(p.id)) {
+        const img = new Image();
+        img.src = p.faceSnapshot;
+        faceImagesRef.current.set(p.id, img);
+      }
+    }
+  }, [participants]);
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -341,6 +372,7 @@ export default function ConstellationCanvas({
         highlightedId,
         captureGlowId,
         captureGlowStartRef.current,
+        faceImagesRef.current,
         width,
         height,
         performance.now()
