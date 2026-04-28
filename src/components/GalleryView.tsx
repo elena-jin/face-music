@@ -1,5 +1,5 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
-import type { Participant, ExpressionSnapshot } from '../engine/types';
+import { useEffect, useRef } from 'react';
+import type { Participant } from '../engine/types';
 import { HandTracker, type HandPoint } from '../engine/HandTracker';
 
 interface Props {
@@ -11,59 +11,28 @@ interface Props {
   videoStream: MediaStream | null;
 }
 
-const NODE_RADIUS = 10;
-const HOVER_RADIUS = 32;
-const CONNECTION_DIST = 250;
-const CONDUCT_RADIUS = 80;
-
-const FACE_OUTLINE = [
-  10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365,
-  379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93,
-  234, 127, 162, 21, 54, 103, 67, 109, 10,
-];
-const LEFT_EYE = [33, 160, 158, 133, 153, 144, 33];
-const RIGHT_EYE = [362, 385, 387, 263, 373, 380, 362];
-const LIPS_OUTER = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84, 181, 91, 146, 61];
-
-function drawFaceFromLandmarks(
-  ctx: CanvasRenderingContext2D,
-  landmarks: { x: number; y: number; z: number }[],
-  cx: number,
-  cy: number,
-  scale: number,
-  hue: number,
-  alpha: number
-) {
-  if (!landmarks || landmarks.length < 468) return;
-  const refX = landmarks[1].x;
-  const refY = landmarks[1].y;
-
-  const drawPath = (indices: number[], color: string, lineW: number) => {
-    ctx.beginPath();
-    for (let i = 0; i < indices.length; i++) {
-      const pt = landmarks[indices[i]];
-      if (!pt) continue;
-      const x = cx + (pt.x - refX) * scale;
-      const y = cy + (pt.y - refY) * scale;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.strokeStyle = color;
-    ctx.lineWidth = lineW;
-    ctx.stroke();
-  };
-
-  drawPath(FACE_OUTLINE, `hsla(${hue}, 50%, 65%, ${alpha * 0.7})`, 1.2);
-  drawPath(LEFT_EYE, `hsla(${hue}, 70%, 75%, ${alpha * 0.9})`, 1);
-  drawPath(RIGHT_EYE, `hsla(${hue}, 70%, 75%, ${alpha * 0.9})`, 1);
-  drawPath(LIPS_OUTER, `hsla(${hue}, 45%, 60%, ${alpha * 0.6})`, 0.8);
+interface Entity {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  depth: number; // 0 = far, 1 = close
+  baseAngle: number;
+  orbitRadius: number;
+  orbitSpeed: number;
+  activated: number; // 0-1, how much the entity is activated by interaction
+  lastActivated: number;
 }
 
-function formatTime(ts: number, baseTs: number): string {
-  const ms = ts - baseTs;
-  const sec = (ms / 1000).toFixed(1);
-  return `+${sec}s`;
+interface Ripple {
+  x: number;
+  y: number;
+  birth: number;
+  maxRadius: number;
 }
+
+const INTERACT_RADIUS = 120;
+const CHAIN_RADIUS = 180;
 
 export default function GalleryView({
   participants,
@@ -75,33 +44,49 @@ export default function GalleryView({
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [hoveredExprIdx, setHoveredExprIdx] = useState(0);
-  const hoveredIdRef = useRef<string | null>(null);
-  const hoveredExprIdxRef = useRef(0);
-  const positionsRef = useRef<Map<string, { x: number; y: number; vx: number; vy: number }>>(new Map());
+  const entitiesRef = useRef<Map<string, Entity>>(new Map());
   const handTrackerRef = useRef<HandTracker | null>(null);
   const fingertipsRef = useRef<HandPoint[]>([]);
-  const conductedIdsRef = useRef<Set<string>>(new Set());
+  const handActiveRef = useRef(false);
   const faceImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
-  const handTrackingActiveRef = useRef(false);
+  const conductedRef = useRef<Set<string>>(new Set());
+  const ripplesRef = useRef<Ripple[]>([]);
+  const noiseCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Initialize hand tracker
+  const onPlayRef = useRef(onPlaySound);
+  onPlayRef.current = onPlaySound;
+  const onStopRef = useRef(onStopSound);
+  onStopRef.current = onStopSound;
+
+  // Generate noise texture once
+  useEffect(() => {
+    const nc = document.createElement('canvas');
+    nc.width = 256;
+    nc.height = 256;
+    const nctx = nc.getContext('2d');
+    if (nctx) {
+      const imageData = nctx.createImageData(256, 256);
+      for (let i = 0; i < imageData.data.length; i += 4) {
+        const v = Math.random() * 15;
+        imageData.data[i] = v;
+        imageData.data[i + 1] = v;
+        imageData.data[i + 2] = v;
+        imageData.data[i + 3] = 20;
+      }
+      nctx.putImageData(imageData, 0, 0);
+    }
+    noiseCanvasRef.current = nc;
+  }, []);
+
+  // Init hand tracker
   useEffect(() => {
     const tracker = new HandTracker();
     handTrackerRef.current = tracker;
-    tracker.init().then(() => {
-      handTrackingActiveRef.current = true;
-    }).catch(() => {
-      // hand tracking not available, fall back to mouse
-    });
-    return () => {
-      handTrackingActiveRef.current = false;
-      tracker.destroy();
-    };
+    tracker.init().then(() => { handActiveRef.current = true; }).catch(() => {});
+    return () => { handActiveRef.current = false; tracker.destroy(); };
   }, []);
 
-  // Connect video stream
+  // Connect video for hand tracking
   useEffect(() => {
     if (videoRef.current && videoStream) {
       videoRef.current.srcObject = videoStream;
@@ -109,21 +94,26 @@ export default function GalleryView({
     }
   }, [videoStream]);
 
-  // Initialize positions with spatial splattering
+  // Initialize entities
   useEffect(() => {
+    const now = Date.now();
     for (const p of participants) {
-      if (!positionsRef.current.has(p.id)) {
-        // Golden angle distribution for organic spread
-        const idx = positionsRef.current.size;
-        const angle = idx * 2.399963; // golden angle in radians
-        const radius = 0.15 + Math.sqrt(idx / Math.max(participants.length, 10)) * 0.32;
-        const cx = 0.5 + Math.cos(angle) * radius;
-        const cy = 0.5 + Math.sin(angle) * radius;
-        positionsRef.current.set(p.id, {
-          x: Math.max(60, Math.min(width - 60, cx * width)),
-          y: Math.max(60, Math.min(height - 60, cy * height)),
-          vx: (Math.random() - 0.5) * 0.2,
-          vy: (Math.random() - 0.5) * 0.2,
+      if (!entitiesRef.current.has(p.id)) {
+        const age = (now - p.timestamp) / 1000;
+        const ageFactor = Math.min(age / 600, 1); // 0-1 over 10 minutes
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 0.15 + ageFactor * 0.35 + Math.random() * 0.1;
+        entitiesRef.current.set(p.id, {
+          x: 0.5 + Math.cos(angle) * dist,
+          y: 0.5 + Math.sin(angle) * dist,
+          vx: 0,
+          vy: 0,
+          depth: 0.3 + Math.random() * 0.7 - ageFactor * 0.3,
+          baseAngle: angle,
+          orbitRadius: dist,
+          orbitSpeed: (0.00005 + Math.random() * 0.0001) * (Math.random() > 0.5 ? 1 : -1),
+          activated: 0,
+          lastActivated: 0,
         });
       }
       if (p.faceSnapshot && !faceImagesRef.current.has(p.id)) {
@@ -132,62 +122,12 @@ export default function GalleryView({
         faceImagesRef.current.set(p.id, img);
       }
     }
-  }, [participants, width, height]);
-
-  const handlePointerMove = useCallback(
-    (e: React.PointerEvent<HTMLCanvasElement>) => {
-      if (handTrackingActiveRef.current) return; // hand tracking handles interaction
-      const rect = e.currentTarget.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
-
-      for (const p of participants) {
-        const pos = positionsRef.current.get(p.id);
-        if (!pos) continue;
-        const dist = Math.hypot(mx - pos.x, my - pos.y);
-        if (dist < HOVER_RADIUS) {
-          if (hoveredIdRef.current !== p.id) {
-            if (hoveredIdRef.current) onStopSound(hoveredIdRef.current);
-            hoveredIdRef.current = p.id;
-            setHoveredId(p.id);
-            hoveredExprIdxRef.current = 0;
-            setHoveredExprIdx(0);
-            onPlaySound(p.id);
-          }
-          return;
-        }
-      }
-      if (hoveredIdRef.current) {
-        onStopSound(hoveredIdRef.current);
-        hoveredIdRef.current = null;
-        setHoveredId(null);
-      }
-    },
-    [participants, onPlaySound, onStopSound]
-  );
-
-  const handleWheel = useCallback(
-    (e: React.WheelEvent<HTMLCanvasElement>) => {
-      if (!hoveredIdRef.current) return;
-      const p = participants.find((pp) => pp.id === hoveredIdRef.current);
-      if (!p || !p.expressions || p.expressions.length === 0) return;
-      const dir = e.deltaY > 0 ? 1 : -1;
-      const next = Math.max(0, Math.min(p.expressions.length - 1, hoveredExprIdxRef.current + dir));
-      hoveredExprIdxRef.current = next;
-      setHoveredExprIdx(next);
-    },
-    [participants]
-  );
-
-  const onStopSoundRef = useRef(onStopSound);
-  onStopSoundRef.current = onStopSound;
-  const onPlaySoundRef = useRef(onPlaySound);
-  onPlaySoundRef.current = onPlaySound;
+  }, [participants]);
 
   useEffect(() => {
     return () => {
-      if (hoveredIdRef.current) {
-        onStopSoundRef.current(hoveredIdRef.current);
+      for (const id of conductedRef.current) {
+        onStopRef.current(id);
       }
     };
   }, []);
@@ -202,20 +142,42 @@ export default function GalleryView({
     let lastHandDetect = 0;
 
     const render = () => {
+      const now = performance.now();
       const dpr = window.devicePixelRatio || 1;
       canvas.width = width * dpr;
       canvas.height = height * dpr;
       ctx.scale(dpr, dpr);
-      ctx.clearRect(0, 0, width, height);
 
-      // Hand tracking every ~50ms
-      const now = performance.now();
+      // Background: deep gradient
+      const bgGrad = ctx.createRadialGradient(
+        width / 2, height / 2, 0,
+        width / 2, height / 2, Math.max(width, height) * 0.7
+      );
+      bgGrad.addColorStop(0, '#0a0c14');
+      bgGrad.addColorStop(0.5, '#060810');
+      bgGrad.addColorStop(1, '#020306');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, width, height);
+
+      // Noise texture overlay
+      if (noiseCanvasRef.current) {
+        ctx.save();
+        ctx.globalAlpha = 0.03;
+        const pattern = ctx.createPattern(noiseCanvasRef.current, 'repeat');
+        if (pattern) {
+          ctx.fillStyle = pattern;
+          ctx.fillRect(0, 0, width, height);
+        }
+        ctx.restore();
+      }
+
+      // Hand tracking
       if (
-        handTrackingActiveRef.current &&
+        handActiveRef.current &&
         handTrackerRef.current?.isReady() &&
         videoRef.current &&
         videoRef.current.readyState >= 2 &&
-        now - lastHandDetect > 50
+        now - lastHandDetect > 60
       ) {
         lastHandDetect = now;
         try {
@@ -225,221 +187,296 @@ export default function GalleryView({
         }
       }
 
-      // Convert fingertip normalized coords to canvas coords (mirrored)
       const fingers = fingertipsRef.current.map(fp => ({
         x: (1 - fp.x) * width,
         y: fp.y * height,
       }));
 
-      // Conduct: fingers grab and move nearby nodes
+      // Update ripples
+      ripplesRef.current = ripplesRef.current.filter(r => now - r.birth < 2000);
+
+      // Add ripples from finger movement
+      if (fingers.length > 0 && Math.random() < 0.15) {
+        const f = fingers[Math.floor(Math.random() * fingers.length)];
+        ripplesRef.current.push({ x: f.x, y: f.y, birth: now, maxRadius: 80 + Math.random() * 60 });
+      }
+
+      // Interaction: fingers influence entities
       const newConducted = new Set<string>();
       for (const finger of fingers) {
         for (const p of participants) {
-          const pos = positionsRef.current.get(p.id);
-          if (!pos) continue;
-          const dx = pos.x - finger.x;
-          const dy = pos.y - finger.y;
+          const ent = entitiesRef.current.get(p.id);
+          if (!ent) continue;
+          const ex = ent.x * width;
+          const ey = ent.y * height;
+          const dx = ex - finger.x;
+          const dy = ey - finger.y;
           const dist = Math.hypot(dx, dy);
-          if (dist < CONDUCT_RADIUS) {
+
+          if (dist < INTERACT_RADIUS) {
             newConducted.add(p.id);
-            if (dist < 30) {
-              // Very close: drag node with finger
-              pos.x += (finger.x - pos.x) * 0.3;
-              pos.y += (finger.y - pos.y) * 0.3;
-              pos.vx *= 0.5;
-              pos.vy *= 0.5;
+            ent.activated = Math.min(1, ent.activated + 0.08);
+            ent.lastActivated = now;
+
+            if (dist < 40 && dist > 0) {
+              // Drag toward finger
+              ent.x += (finger.x / width - ent.x) * 0.04;
+              ent.y += (finger.y / height - ent.y) * 0.04;
+              ent.vx *= 0.8;
+              ent.vy *= 0.8;
             } else if (dist > 0) {
-              // Push node away from finger
-              const force = (CONDUCT_RADIUS - dist) / CONDUCT_RADIUS * 3;
-              pos.vx += (dx / dist) * force;
-              pos.vy += (dy / dist) * force;
+              // Gentle push
+              const force = (INTERACT_RADIUS - dist) / INTERACT_RADIUS * 0.002;
+              ent.vx += (dx / dist) * force;
+              ent.vy += (dy / dist) * force;
+            }
+
+            // Chain reaction to nearby faces
+            for (const other of participants) {
+              if (other.id === p.id) continue;
+              const oEnt = entitiesRef.current.get(other.id);
+              if (!oEnt) continue;
+              const ox = oEnt.x * width;
+              const oy = oEnt.y * height;
+              const oDist = Math.hypot(ex - ox, ey - oy);
+              if (oDist < CHAIN_RADIUS) {
+                const chainStrength = (1 - oDist / CHAIN_RADIUS) * ent.activated * 0.3;
+                oEnt.activated = Math.min(1, oEnt.activated + chainStrength * 0.02);
+                if (chainStrength > 0.1) {
+                  newConducted.add(other.id);
+                }
+              }
             }
           }
         }
       }
 
-      // Trigger/stop sounds based on conducting
+      // Sound triggering
       for (const id of newConducted) {
-        if (!conductedIdsRef.current.has(id)) {
-          onPlaySoundRef.current(id);
+        if (!conductedRef.current.has(id)) {
+          onPlayRef.current(id);
         }
       }
-      for (const id of conductedIdsRef.current) {
+      for (const id of conductedRef.current) {
         if (!newConducted.has(id)) {
-          onStopSoundRef.current(id);
+          onStopRef.current(id);
         }
       }
-      conductedIdsRef.current = newConducted;
+      conductedRef.current = newConducted;
 
-      // Update positions with drift
-      for (const [id, pos] of positionsRef.current) {
-        pos.x += pos.vx;
-        pos.y += pos.vy;
-        if (pos.x < 50 || pos.x > width - 50) pos.vx *= -0.8;
-        if (pos.y < 50 || pos.y > height - 50) pos.vy *= -0.8;
-        pos.x = Math.max(50, Math.min(width - 50, pos.x));
-        pos.y = Math.max(50, Math.min(height - 50, pos.y));
+      // Sort by depth for proper layering (far entities drawn first)
+      const sorted = [...participants].sort((a, b) => {
+        const ea = entitiesRef.current.get(a.id);
+        const eb = entitiesRef.current.get(b.id);
+        return (ea?.depth ?? 0) - (eb?.depth ?? 0);
+      });
 
-        // Gentle repulsion between nodes
-        for (const [otherId, otherPos] of positionsRef.current) {
-          if (id === otherId) continue;
-          const dx = pos.x - otherPos.x;
-          const dy = pos.y - otherPos.y;
-          const dist = Math.hypot(dx, dy);
-          if (dist < 80 && dist > 0) {
-            const force = 0.03 * (80 - dist) / dist;
-            pos.vx += dx * force;
-            pos.vy += dy * force;
-          }
-        }
+      // Update and draw entities
+      const currentTime = Date.now();
+      for (const p of sorted) {
+        const ent = entitiesRef.current.get(p.id);
+        if (!ent) continue;
 
-        // Damping
-        pos.vx *= 0.96;
-        pos.vy *= 0.96;
-        // Random gentle drift
-        pos.vx += (Math.random() - 0.5) * 0.02;
-        pos.vy += (Math.random() - 0.5) * 0.02;
-      }
+        // Gentle orbital drift
+        ent.baseAngle += ent.orbitSpeed;
+        const targetX = 0.5 + Math.cos(ent.baseAngle) * ent.orbitRadius;
+        const targetY = 0.5 + Math.sin(ent.baseAngle) * ent.orbitRadius;
+        ent.vx += (targetX - ent.x) * 0.0003;
+        ent.vy += (targetY - ent.y) * 0.0003;
 
-      // Connection lines
-      ctx.save();
-      for (let i = 0; i < participants.length; i++) {
-        const posA = positionsRef.current.get(participants[i].id);
-        if (!posA) continue;
-        for (let j = i + 1; j < participants.length; j++) {
-          const posB = positionsRef.current.get(participants[j].id);
-          if (!posB) continue;
-          const dist = Math.hypot(posA.x - posB.x, posA.y - posB.y);
-          if (dist < CONNECTION_DIST) {
-            const alpha = (1 - dist / CONNECTION_DIST) * 0.06;
-            ctx.beginPath();
-            ctx.moveTo(posA.x, posA.y);
-            ctx.lineTo(posB.x, posB.y);
-            const grad = ctx.createLinearGradient(posA.x, posA.y, posB.x, posB.y);
-            grad.addColorStop(0, `hsla(${participants[i].hue}, 40%, 55%, ${alpha})`);
-            grad.addColorStop(1, `hsla(${participants[j].hue}, 40%, 55%, ${alpha})`);
-            ctx.strokeStyle = grad;
-            ctx.lineWidth = 0.5;
-            ctx.stroke();
-          }
-        }
-      }
-      ctx.restore();
+        // Apply velocity with heavy damping
+        ent.x += ent.vx;
+        ent.y += ent.vy;
+        ent.vx *= 0.985;
+        ent.vy *= 0.985;
 
-      const time = performance.now();
-      const currentHoveredId = hoveredIdRef.current;
-      const currentExprIdx = hoveredExprIdxRef.current;
+        // Boundary
+        ent.x = Math.max(0.05, Math.min(0.95, ent.x));
+        ent.y = Math.max(0.05, Math.min(0.95, ent.y));
 
-      // Draw nodes
-      for (const p of participants) {
-        const pos = positionsRef.current.get(p.id);
-        if (!pos) continue;
-        const isConducted = conductedIdsRef.current.has(p.id);
-        const isHovered = p.id === currentHoveredId || isConducted;
-        const pulse = Math.sin(time * 0.002 + p.hue) * 0.3 + 0.7;
+        // Decay activation
+        ent.activated *= 0.97;
+        if (ent.activated < 0.01) ent.activated = 0;
 
-        // Glow
-        const glowR = isHovered ? 50 : 20;
-        const glowA = isHovered ? 0.5 : 0.1 * pulse;
-        const glow = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, glowR);
-        glow.addColorStop(0, `hsla(${p.hue}, 65%, 60%, ${glowA})`);
-        glow.addColorStop(1, `hsla(${p.hue}, 65%, 60%, 0)`);
+        // Time-based properties
+        const age = (currentTime - p.timestamp) / 1000;
+        const ageFactor = Math.min(age / 3600, 1); // fade over 1 hour
+        const freshness = Math.max(0, 1 - ageFactor);
+
+        const ex = ent.x * width;
+        const ey = ent.y * height;
+
+        // Size based on depth + activation
+        const baseSize = 20 + ent.depth * 40;
+        const activatedBoost = ent.activated * 20;
+        const size = baseSize + activatedBoost;
+
+        // Sound-reactive pulse
+        const pulse = ent.activated > 0
+          ? 1 + Math.sin(now * 0.008) * 0.06 * ent.activated
+          : 1 + Math.sin(now * 0.001 + p.hue) * 0.02;
+        const finalSize = size * pulse;
+
+        // Alpha based on depth + age + activation
+        const depthAlpha = 0.15 + ent.depth * 0.5;
+        const ageAlpha = 0.3 + freshness * 0.7;
+        const activAlpha = ent.activated * 0.4;
+        const alpha = Math.min(1, depthAlpha * ageAlpha + activAlpha);
+
+        // Outer halo / glow
+        const glowSize = finalSize * (2.5 + ent.activated * 1.5);
+        const glow = ctx.createRadialGradient(ex, ey, finalSize * 0.3, ex, ey, glowSize);
+        const hueShift = ent.activated > 0.1 ? p.hue : 220;
+        glow.addColorStop(0, `hsla(${hueShift}, 30%, 50%, ${alpha * 0.12})`);
+        glow.addColorStop(0.4, `hsla(${hueShift}, 20%, 40%, ${alpha * 0.04})`);
+        glow.addColorStop(1, `hsla(${hueShift}, 15%, 30%, 0)`);
         ctx.fillStyle = glow;
-        ctx.fillRect(pos.x - glowR, pos.y - glowR, glowR * 2, glowR * 2);
+        ctx.fillRect(ex - glowSize, ey - glowSize, glowSize * 2, glowSize * 2);
 
-        // Face photo or circle
+        // Face image as memory trace
         const img = faceImagesRef.current.get(p.id);
         if (img && img.complete && img.naturalWidth > 0) {
-          const imgSize = isHovered ? 56 : 36;
-          const imgAlpha = isHovered ? 0.95 : 0.7;
           ctx.save();
-          ctx.globalAlpha = imgAlpha;
+
+          // Create feathered circular mask
+          const maskGrad = ctx.createRadialGradient(ex, ey, finalSize * 0.2, ex, ey, finalSize);
+          maskGrad.addColorStop(0, `rgba(255,255,255,${alpha})`);
+          maskGrad.addColorStop(0.6, `rgba(255,255,255,${alpha * 0.7})`);
+          maskGrad.addColorStop(1, 'rgba(255,255,255,0)');
+
+          // Draw desaturated face
+          ctx.globalAlpha = alpha * 0.85;
           ctx.beginPath();
-          ctx.arc(pos.x, pos.y, imgSize / 2, 0, Math.PI * 2);
+          ctx.arc(ex, ey, finalSize, 0, Math.PI * 2);
           ctx.clip();
-          ctx.drawImage(img, pos.x - imgSize / 2, pos.y - imgSize / 2, imgSize, imgSize);
+
+          // Draw the face image
+          ctx.drawImage(
+            img,
+            ex - finalSize, ey - finalSize,
+            finalSize * 2, finalSize * 2
+          );
+
+          // Desaturation overlay
+          ctx.globalCompositeOperation = 'saturation';
+          ctx.fillStyle = `hsl(0, ${Math.floor(15 + ent.activated * 30)}%, 50%)`;
+          ctx.fillRect(ex - finalSize, ey - finalSize, finalSize * 2, finalSize * 2);
+
+          // Color tint
+          ctx.globalCompositeOperation = 'soft-light';
+          ctx.fillStyle = `hsla(220, 40%, 30%, 0.3)`;
+          ctx.fillRect(ex - finalSize, ey - finalSize, finalSize * 2, finalSize * 2);
+
           ctx.restore();
-          ctx.beginPath();
-          ctx.arc(pos.x, pos.y, imgSize / 2, 0, Math.PI * 2);
-          ctx.strokeStyle = `hsla(${p.hue}, 80%, 70%, ${isHovered ? 0.8 : 0.35})`;
-          ctx.lineWidth = isHovered ? 2 : 1;
-          ctx.stroke();
+
+          // Feathered edge (drawn on top)
+          ctx.save();
+          const edgeFade = ctx.createRadialGradient(ex, ey, finalSize * 0.5, ex, ey, finalSize * 1.1);
+          edgeFade.addColorStop(0, 'rgba(6,8,16,0)');
+          edgeFade.addColorStop(0.7, 'rgba(6,8,16,0)');
+          edgeFade.addColorStop(1, 'rgba(6,8,16,1)');
+          ctx.fillStyle = edgeFade;
+          ctx.fillRect(ex - finalSize * 1.2, ey - finalSize * 1.2, finalSize * 2.4, finalSize * 2.4);
+          ctx.restore();
         } else {
-          const r = isHovered ? NODE_RADIUS * 2 : NODE_RADIUS * pulse;
+          // Fallback: ethereal orb
+          ctx.save();
+          const orbGrad = ctx.createRadialGradient(ex, ey, 0, ex, ey, finalSize);
+          orbGrad.addColorStop(0, `hsla(${p.hue}, 25%, 55%, ${alpha * 0.5})`);
+          orbGrad.addColorStop(0.5, `hsla(${p.hue}, 20%, 45%, ${alpha * 0.2})`);
+          orbGrad.addColorStop(1, `hsla(${p.hue}, 15%, 35%, 0)`);
+          ctx.fillStyle = orbGrad;
           ctx.beginPath();
-          ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
-          ctx.fillStyle = `hsla(${p.hue}, 55%, 60%, ${isHovered ? 0.9 : 0.45 * pulse})`;
+          ctx.arc(ex, ey, finalSize, 0, Math.PI * 2);
           ctx.fill();
-          if (isHovered) {
-            ctx.strokeStyle = `hsla(${p.hue}, 75%, 75%, 0.6)`;
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-          }
+          ctx.restore();
         }
 
-        // Hovered: show expression details
-        if (p.id === currentHoveredId && !isConducted) {
-          const expressions = p.expressions ?? [];
-          const exprToShow = expressions.length > 0
-            ? expressions[Math.min(currentExprIdx, expressions.length - 1)]
-            : null;
-          const landmarksToUse = exprToShow ? exprToShow.landmarks : p.landmarks;
-          drawFaceFromLandmarks(ctx, landmarksToUse, pos.x, pos.y - 50, 120, p.hue, 0.8);
+        // Subtle vibration when activated
+        if (ent.activated > 0.05) {
+          ctx.save();
+          const vibR = finalSize * (1.3 + ent.activated * 0.5);
+          const vibGrad = ctx.createRadialGradient(ex, ey, finalSize * 0.8, ex, ey, vibR);
+          vibGrad.addColorStop(0, `hsla(${p.hue}, 40%, 60%, 0)`);
+          vibGrad.addColorStop(0.5, `hsla(${p.hue}, 40%, 60%, ${ent.activated * 0.15})`);
+          vibGrad.addColorStop(1, `hsla(${p.hue}, 30%, 50%, 0)`);
+          ctx.fillStyle = vibGrad;
+          ctx.fillRect(ex - vibR, ey - vibR, vibR * 2, vibR * 2);
+          ctx.restore();
+        }
 
-          if (exprToShow) {
-            ctx.save();
-            ctx.font = '9px monospace';
-            ctx.textAlign = 'center';
-            ctx.fillStyle = `hsla(${p.hue}, 50%, 70%, 0.7)`;
-            const timeLabel = formatTime(exprToShow.timestamp, p.timestamp);
-            ctx.fillText(timeLabel, pos.x, pos.y + 30);
-            if (expressions.length > 1) {
-              ctx.fillStyle = `hsla(${p.hue}, 40%, 60%, 0.4)`;
-              ctx.fillText(`${currentExprIdx + 1}/${expressions.length}  scroll to browse`, pos.x, pos.y + 42);
+        // Connection lines to nearby activated faces (harmonic visualization)
+        if (ent.activated > 0.1) {
+          for (const other of participants) {
+            if (other.id === p.id) continue;
+            const oEnt = entitiesRef.current.get(other.id);
+            if (!oEnt || oEnt.activated < 0.05) continue;
+            const ox = oEnt.x * width;
+            const oy = oEnt.y * height;
+            const d = Math.hypot(ex - ox, ey - oy);
+            if (d < CHAIN_RADIUS) {
+              const lineAlpha = (1 - d / CHAIN_RADIUS) * Math.min(ent.activated, oEnt.activated) * 0.15;
+              ctx.save();
+              ctx.beginPath();
+              ctx.moveTo(ex, ey);
+              ctx.lineTo(ox, oy);
+              ctx.strokeStyle = `hsla(${(p.hue + other.hue) / 2}, 30%, 55%, ${lineAlpha})`;
+              ctx.lineWidth = 0.5;
+              ctx.stroke();
+              ctx.restore();
             }
-            ctx.restore();
           }
         }
       }
 
-      // Draw finger cursors
-      for (const finger of fingers) {
+      // Draw ripples
+      for (const ripple of ripplesRef.current) {
+        const age = (now - ripple.birth) / 2000;
+        if (age > 1) continue;
+        const r = ripple.maxRadius * age;
+        const alpha = (1 - age) * 0.08;
         ctx.save();
-        const fingerGlow = ctx.createRadialGradient(finger.x, finger.y, 0, finger.x, finger.y, CONDUCT_RADIUS);
-        fingerGlow.addColorStop(0, 'hsla(40, 80%, 75%, 0.15)');
-        fingerGlow.addColorStop(0.5, 'hsla(40, 70%, 65%, 0.05)');
-        fingerGlow.addColorStop(1, 'hsla(40, 60%, 60%, 0)');
-        ctx.fillStyle = fingerGlow;
-        ctx.fillRect(finger.x - CONDUCT_RADIUS, finger.y - CONDUCT_RADIUS, CONDUCT_RADIUS * 2, CONDUCT_RADIUS * 2);
-
         ctx.beginPath();
-        ctx.arc(finger.x, finger.y, 6, 0, Math.PI * 2);
-        ctx.fillStyle = 'hsla(40, 80%, 80%, 0.6)';
-        ctx.fill();
+        ctx.arc(ripple.x, ripple.y, r, 0, Math.PI * 2);
+        ctx.strokeStyle = `hsla(210, 30%, 60%, ${alpha})`;
+        ctx.lineWidth = 1.5 * (1 - age);
+        ctx.stroke();
         ctx.restore();
       }
 
-      // Ambient particles
+      // Draw hand interaction as soft glow field (no markers)
+      for (const finger of fingers) {
+        ctx.save();
+        const handGlow = ctx.createRadialGradient(
+          finger.x, finger.y, 0,
+          finger.x, finger.y, INTERACT_RADIUS
+        );
+        handGlow.addColorStop(0, 'hsla(210, 25%, 55%, 0.06)');
+        handGlow.addColorStop(0.3, 'hsla(210, 20%, 50%, 0.03)');
+        handGlow.addColorStop(1, 'hsla(210, 15%, 45%, 0)');
+        ctx.fillStyle = handGlow;
+        ctx.fillRect(
+          finger.x - INTERACT_RADIUS,
+          finger.y - INTERACT_RADIUS,
+          INTERACT_RADIUS * 2,
+          INTERACT_RADIUS * 2
+        );
+        ctx.restore();
+      }
+
+      // Ambient depth particles
       ctx.save();
-      for (let i = 0; i < 40; i++) {
-        const px = ((Math.sin(time * 0.00015 + i * 1.7) + 1) / 2) * width;
-        const py = ((Math.cos(time * 0.00012 + i * 2.3) + 1) / 2) * height;
+      for (let i = 0; i < 50; i++) {
+        const t = now * 0.00003;
+        const px = ((Math.sin(t * (1 + i * 0.1) + i * 2.1) + 1) / 2) * width;
+        const py = ((Math.cos(t * (0.8 + i * 0.07) + i * 3.7) + 1) / 2) * height;
+        const pAlpha = 0.01 + Math.sin(t * 3 + i) * 0.008;
         ctx.beginPath();
-        ctx.arc(px, py, 0.8, 0, Math.PI * 2);
-        ctx.fillStyle = 'hsla(200, 25%, 65%, 0.04)';
+        ctx.arc(px, py, 0.5 + Math.sin(i * 0.7) * 0.3, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(220, 20%, 60%, ${Math.max(0, pAlpha)})`;
         ctx.fill();
       }
       ctx.restore();
-
-      // Hand tracking hint
-      if (fingers.length === 0 && participants.length > 0) {
-        ctx.save();
-        ctx.textAlign = 'center';
-        ctx.font = '11px monospace';
-        ctx.fillStyle = 'hsla(220, 20%, 70%, 0.25)';
-        ctx.fillText('move your hands to conduct the sounds', width / 2, height - 30);
-        ctx.restore();
-      }
 
       raf = requestAnimationFrame(render);
     };
@@ -449,20 +486,17 @@ export default function GalleryView({
 
   return (
     <div className="absolute inset-0">
-      {/* Hidden video for hand tracking */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted
-        className="absolute inset-0 w-full h-full object-cover opacity-[0.12] grayscale scale-x-[-1] pointer-events-none"
+        className="absolute w-0 h-0 opacity-0 pointer-events-none"
       />
       <canvas
         ref={canvasRef}
         className="absolute inset-0"
-        onPointerMove={handlePointerMove}
-        onWheel={handleWheel}
-        style={{ width, height, cursor: hoveredId ? 'pointer' : 'default' }}
+        style={{ width, height }}
       />
     </div>
   );

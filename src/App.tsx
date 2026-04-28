@@ -537,27 +537,27 @@ export default function App() {
         />
       )}
 
-      {/* View toggle */}
-      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] flex gap-1 font-mono">
+      {/* View toggle — ultra-minimal, fades in on hover */}
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] flex gap-1 font-mono opacity-[0.15] hover:opacity-60 transition-opacity duration-700">
         <button
           onClick={() => setActiveView('live')}
-          className={`px-4 py-2 text-[9px] tracking-[0.3em] uppercase border transition-all duration-300 ${
+          className={`px-3 py-1.5 text-[8px] tracking-[0.3em] uppercase transition-all duration-500 ${
             activeView === 'live'
-              ? 'border-white/20 text-white/60 bg-white/5'
-              : 'border-white/5 text-white/20 hover:text-white/40'
+              ? 'text-white/50'
+              : 'text-white/15 hover:text-white/30'
           }`}
         >
           Live
         </button>
         <button
           onClick={() => setActiveView('gallery')}
-          className={`px-4 py-2 text-[9px] tracking-[0.3em] uppercase border transition-all duration-300 ${
+          className={`px-3 py-1.5 text-[8px] tracking-[0.3em] uppercase transition-all duration-500 ${
             activeView === 'gallery'
-              ? 'border-white/20 text-white/60 bg-white/5'
-              : 'border-white/5 text-white/20 hover:text-white/40'
+              ? 'text-white/50'
+              : 'text-white/15 hover:text-white/30'
           }`}
         >
-          Gallery {participants.length > 0 && `(${participants.length})`}
+          Memory
         </button>
       </div>
 
