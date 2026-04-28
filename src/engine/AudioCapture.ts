@@ -2,7 +2,7 @@ import * as Tone from 'tone';
 
 const MAJOR_PENTATONIC = ['C', 'D', 'E', 'G', 'A'];
 const MINOR_PENTATONIC = ['C', 'Eb', 'F', 'G', 'Bb'];
-const CLIP_DURATION = 2.5;
+const CLIP_DURATION = 3;
 
 interface FaceParams {
   noteIdx: number;
@@ -16,29 +16,26 @@ interface FaceParams {
 export class AudioCapture {
   async capture(params: FaceParams): Promise<{ blob: Blob; duration: number }> {
     try {
-      const buffer = await Tone.Offline(({ transport }) => {
+      const buffer = await Tone.Offline(() => {
         const scale = params.isMajor ? MAJOR_PENTATONIC : MINOR_PENTATONIC;
-        const note = `${scale[params.noteIdx % scale.length]}${params.octave}`;
+        const note1 = `${scale[params.noteIdx % scale.length]}${params.octave}`;
+        const note2 = `${scale[(params.noteIdx + 2) % scale.length]}${params.octave}`;
 
-        const reverb = new Tone.Reverb({ decay: 3, wet: 0.4 }).toDestination();
+        // Simple clean chain: synth → filter → destination (no reverb in offline)
         const filter = new Tone.Filter(
-          Math.min(params.brightness, 3000),
+          Math.min(params.brightness, 2500),
           'lowpass',
           -12,
-        ).connect(reverb);
-        const gain = new Tone.Gain(0.3).connect(filter);
+        ).toDestination();
 
         const synth = new Tone.Synth({
-          oscillator: { type: params.waveform },
-          envelope: { attack: 0.8, decay: 0.6, sustain: 0.3, release: 1.5 },
-          volume: -12,
-        }).connect(gain);
+          oscillator: { type: 'sine' },
+          envelope: { attack: 0.5, decay: 0.8, sustain: 0.4, release: 1.2 },
+          volume: -8,
+        }).connect(filter);
 
-        transport.start(0);
-        synth.triggerAttackRelease(note, '1n', 0.1);
-
-        const secondNote = `${scale[(params.noteIdx + 2) % scale.length]}${params.octave}`;
-        synth.triggerAttackRelease(secondNote, '2n', 1.2);
+        synth.triggerAttackRelease(note1, '2n', 0.05);
+        synth.triggerAttackRelease(note2, '2n', 1.2);
       }, CLIP_DURATION);
 
       const wav = audioBufferToWav(buffer);

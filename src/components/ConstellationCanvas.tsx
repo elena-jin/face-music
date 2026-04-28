@@ -12,8 +12,8 @@ interface Props {
   onClick: (id: string) => void;
 }
 
-const NODE_RADIUS = 6;
-const HOVER_RADIUS = 16;
+const NODE_RADIUS = 8;
+const HOVER_RADIUS = 28;
 const CONNECTION_DIST = 220;
 const PARTICLE_LIFETIME = 2000;
 
@@ -162,8 +162,8 @@ function drawConstellation(
     if (faceImages.has(p.id)) {
       const img = faceImages.get(p.id)!;
       if (img.complete && img.naturalWidth > 0) {
-        const imgSize = isHighlighted ? 48 : 20;
-        const imgAlpha = isHighlighted ? 0.85 : 0.4 * pulse;
+        const imgSize = isHighlighted ? 72 : 40;
+        const imgAlpha = isHighlighted ? 0.95 : 0.7;
         ctx.save();
         ctx.globalAlpha = imgAlpha;
         ctx.beginPath();
@@ -174,12 +174,12 @@ function drawConstellation(
 
         ctx.beginPath();
         ctx.arc(x, y, imgSize / 2, 0, Math.PI * 2);
-        ctx.strokeStyle = `hsla(${p.hue}, 70%, 65%, ${isHighlighted ? 0.6 : 0.2 * pulse})`;
-        ctx.lineWidth = isHighlighted ? 1.5 : 0.8;
+        ctx.strokeStyle = `hsla(${p.hue}, 80%, 70%, ${isHighlighted ? 0.8 : 0.4})`;
+        ctx.lineWidth = isHighlighted ? 2 : 1.2;
         ctx.stroke();
       }
     } else if (p.landmarks && p.landmarks.length > 0) {
-      const faceAlpha = isHighlighted ? 0.6 : 0.2 * pulse;
+      const faceAlpha = isHighlighted ? 0.6 : 0.3;
       drawMiniFace(ctx, p, x, y - (isHighlighted ? 0 : 2), isHighlighted ? 60 : 30, faceAlpha);
     }
 
