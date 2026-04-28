@@ -5,6 +5,20 @@ export interface HandPoint {
   y: number;
 }
 
+export interface HandData {
+  palm: HandPoint;
+  indexTip: HandPoint;
+  thumbTip: HandPoint;
+  middleTip: HandPoint;
+  pinkyTip: HandPoint;
+  wrist: HandPoint;
+}
+
+export interface HandResult {
+  hands: HandData[];
+  fingertips: HandPoint[];
+}
+
 export class HandTracker {
   private landmarker: HandLandmarker | null = null;
   private ready = false;
@@ -31,26 +45,38 @@ export class HandTracker {
     return this.ready;
   }
 
-  detect(video: HTMLVideoElement, timestamp: number): HandPoint[] {
-    if (!this.landmarker || video.readyState < 2) return [];
+  detect(video: HTMLVideoElement, timestamp: number): HandResult {
+    const empty: HandResult = { hands: [], fingertips: [] };
+    if (!this.landmarker || video.readyState < 2) return empty;
 
     const result = this.landmarker.detectForVideo(video, timestamp);
+    const hands: HandData[] = [];
     const fingertips: HandPoint[] = [];
 
     if (result.landmarks) {
       for (const hand of result.landmarks) {
-        // Index finger tip (landmark 8) — primary conducting finger
-        if (hand[8]) {
-          fingertips.push({ x: hand[8].x, y: hand[8].y });
-        }
-        // Middle finger tip (landmark 12)
-        if (hand[12]) {
-          fingertips.push({ x: hand[12].x, y: hand[12].y });
-        }
+        // Palm center = average of landmarks 0 (wrist), 5, 9, 13, 17
+        const palmPts = [hand[0], hand[5], hand[9], hand[13], hand[17]].filter(Boolean);
+        const palm = {
+          x: palmPts.reduce((s, p) => s + p.x, 0) / palmPts.length,
+          y: palmPts.reduce((s, p) => s + p.y, 0) / palmPts.length,
+        };
+
+        hands.push({
+          palm,
+          indexTip: { x: hand[8].x, y: hand[8].y },
+          thumbTip: { x: hand[4].x, y: hand[4].y },
+          middleTip: { x: hand[12].x, y: hand[12].y },
+          pinkyTip: { x: hand[20].x, y: hand[20].y },
+          wrist: { x: hand[0].x, y: hand[0].y },
+        });
+
+        if (hand[8]) fingertips.push({ x: hand[8].x, y: hand[8].y });
+        if (hand[12]) fingertips.push({ x: hand[12].x, y: hand[12].y });
       }
     }
 
-    return fingertips;
+    return { hands, fingertips };
   }
 
   destroy(): void {
