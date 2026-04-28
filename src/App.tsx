@@ -551,6 +551,7 @@ export default function App() {
           height={dimensions.h}
           onPlaySound={handleGalleryPlay}
           onStopSound={handleGalleryStop}
+          videoStream={streamRef.current}
         />
       )}
 
