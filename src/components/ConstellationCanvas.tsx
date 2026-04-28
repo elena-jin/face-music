@@ -45,6 +45,7 @@ function drawConstellation(
   captureGlowId: string | null,
   captureGlowStart: number,
   faceImages: Map<string, HTMLImageElement>,
+  nodePositions: Map<string, { x: number; y: number; vx: number; vy: number }>,
   w: number,
   h: number,
   time: number
@@ -76,22 +77,24 @@ function drawConstellation(
     for (let j = i + 1; j < participants.length; j++) {
       const a = participants[i];
       const b = participants[j];
-      const dx = a.nodeX * w - b.nodeX * w;
-      const dy = a.nodeY * h - b.nodeY * h;
+      const posA = nodePositions.get(a.id);
+      const posB = nodePositions.get(b.id);
+      if (!posA || !posB) continue;
+      const ax = posA.x * w, ay = posA.y * h;
+      const bx = posB.x * w, by = posB.y * h;
+      const dx = ax - bx;
+      const dy = ay - by;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < CONNECTION_DIST) {
         const alpha = (1 - dist / CONNECTION_DIST) * 0.08;
-        const grad = ctx.createLinearGradient(
-          a.nodeX * w, a.nodeY * h,
-          b.nodeX * w, b.nodeY * h
-        );
+        const grad = ctx.createLinearGradient(ax, ay, bx, by);
         grad.addColorStop(0, `hsla(${a.hue}, 50%, 60%, ${alpha})`);
         grad.addColorStop(1, `hsla(${b.hue}, 50%, 60%, ${alpha})`);
         ctx.beginPath();
-        ctx.moveTo(a.nodeX * w, a.nodeY * h);
-        const midX = (a.nodeX * w + b.nodeX * w) / 2;
-        const midY = (a.nodeY * h + b.nodeY * h) / 2 - 20;
-        ctx.quadraticCurveTo(midX, midY, b.nodeX * w, b.nodeY * h);
+        ctx.moveTo(ax, ay);
+        const midX = (ax + bx) / 2;
+        const midY = (ay + by) / 2 - 20;
+        ctx.quadraticCurveTo(midX, midY, bx, by);
         ctx.strokeStyle = grad;
         ctx.lineWidth = 0.6;
         ctx.stroke();
@@ -115,8 +118,9 @@ function drawConstellation(
 
   // nodes
   for (const p of participants) {
-    const x = p.nodeX * w;
-    const y = p.nodeY * h;
+    const pos = nodePositions.get(p.id);
+    const x = pos ? pos.x * w : p.nodeX * w;
+    const y = pos ? pos.y * h : p.nodeY * h;
     const isHighlighted = p.id === highlightedId;
     const isCaptureGlow = p.id === captureGlowId;
     const pulse = Math.sin(time * 0.002 + p.hue) * 0.3 + 0.7;
@@ -291,6 +295,7 @@ export default function ConstellationCanvas({
   const animEffects = useRef<ParticleEffect[]>([]);
   const captureGlowStartRef = useRef(0);
   const faceImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const nodePositions = useRef<Map<string, { x: number; y: number; vx: number; vy: number }>>(new Map());
 
   useEffect(() => {
     if (captureGlowId) {
@@ -304,6 +309,14 @@ export default function ConstellationCanvas({
 
   useEffect(() => {
     for (const p of participants) {
+      if (!nodePositions.current.has(p.id)) {
+        nodePositions.current.set(p.id, {
+          x: p.nodeX,
+          y: p.nodeY,
+          vx: (Math.random() - 0.5) * 0.0004,
+          vy: (Math.random() - 0.5) * 0.0004,
+        });
+      }
       if (p.faceSnapshot && !faceImagesRef.current.has(p.id)) {
         const img = new Image();
         img.src = p.faceSnapshot;
@@ -312,6 +325,20 @@ export default function ConstellationCanvas({
     }
   }, [participants]);
 
+  const getNodePos = useCallback((p: Participant) => {
+    let pos = nodePositions.current.get(p.id);
+    if (!pos) {
+      pos = {
+        x: p.nodeX,
+        y: p.nodeY,
+        vx: (Math.random() - 0.5) * 0.0004,
+        vy: (Math.random() - 0.5) * 0.0004,
+      };
+      nodePositions.current.set(p.id, pos);
+    }
+    return pos;
+  }, []);
+
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
       const rect = e.currentTarget.getBoundingClientRect();
@@ -319,8 +346,9 @@ export default function ConstellationCanvas({
       const my = e.clientY - rect.top;
 
       for (const p of participants) {
-        const px = p.nodeX * width;
-        const py = p.nodeY * height;
+        const pos = getNodePos(p);
+        const px = pos.x * width;
+        const py = pos.y * height;
         const dist = Math.hypot(mx - px, my - py);
         if (dist < HOVER_RADIUS) {
           onHover(p.id);
@@ -329,7 +357,7 @@ export default function ConstellationCanvas({
       }
       onHover(null);
     },
-    [participants, width, height, onHover]
+    [participants, width, height, onHover, getNodePos]
   );
 
   const handleClick = useCallback(
@@ -339,8 +367,9 @@ export default function ConstellationCanvas({
       const my = e.clientY - rect.top;
 
       for (const p of participants) {
-        const px = p.nodeX * width;
-        const py = p.nodeY * height;
+        const pos = getNodePos(p);
+        const px = pos.x * width;
+        const py = pos.y * height;
         const dist = Math.hypot(mx - px, my - py);
         if (dist < HOVER_RADIUS) {
           onClick(p.id);
@@ -348,7 +377,7 @@ export default function ConstellationCanvas({
         }
       }
     },
-    [participants, width, height, onClick]
+    [participants, width, height, onClick, getNodePos]
   );
 
   useEffect(() => {
@@ -365,6 +394,22 @@ export default function ConstellationCanvas({
       ctx.scale(dpr, dpr);
 
       animEffects.current = updateParticles(animEffects.current);
+
+      for (const p of participants) {
+        const pos = nodePositions.current.get(p.id);
+        if (!pos) continue;
+        pos.x += pos.vx;
+        pos.y += pos.vy;
+        if (pos.x < 0.05 || pos.x > 0.95) pos.vx *= -1;
+        if (pos.y < 0.05 || pos.y > 0.95) pos.vy *= -1;
+        pos.x = Math.max(0.03, Math.min(0.97, pos.x));
+        pos.y = Math.max(0.03, Math.min(0.97, pos.y));
+        pos.vx += (Math.random() - 0.5) * 0.00003;
+        pos.vy += (Math.random() - 0.5) * 0.00003;
+        pos.vx *= 0.999;
+        pos.vy *= 0.999;
+      }
+
       drawConstellation(
         ctx,
         participants,
@@ -373,6 +418,7 @@ export default function ConstellationCanvas({
         captureGlowId,
         captureGlowStartRef.current,
         faceImagesRef.current,
+        nodePositions.current,
         width,
         height,
         performance.now()
