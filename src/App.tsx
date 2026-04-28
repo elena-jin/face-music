@@ -317,10 +317,13 @@ export default function App() {
     soundRef.current?.unhighlightParticipant(id);
   }, []);
 
-  // Start/stop gallery melody based on view
+  // Start/stop gallery melody based on view, clear live voices when leaving live
   useEffect(() => {
-    if (activeView === 'gallery' && participants.length > 0) {
-      soundRef.current?.startMelodyPlayback();
+    if (activeView === 'gallery') {
+      soundRef.current?.updateLiveFaces([], () => 0);
+      if (participants.length > 0) {
+        soundRef.current?.startMelodyPlayback();
+      }
     } else {
       soundRef.current?.stopMelodyPlayback();
     }

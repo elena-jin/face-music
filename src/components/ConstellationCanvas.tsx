@@ -342,7 +342,7 @@ export default function ConstellationCanvas({
     };
     raf = requestAnimationFrame(render);
     return () => cancelAnimationFrame(raf);
-  }, [participants, highlightedId, width, height]);
+  }, [participants, highlightedId, captureGlowId, width, height]);
 
   return (
     <canvas
