@@ -154,31 +154,12 @@ function drawScanLine(
   ctx.fillRect(0, y - 40, w, 80);
 }
 
-function drawGrid(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number
-) {
-  ctx.save();
-  ctx.strokeStyle = 'hsla(200, 30%, 50%, 0.04)';
-  ctx.lineWidth = 0.5;
-  const step = 60;
-  for (let x = 0; x < w; x += step) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, h);
-    ctx.stroke();
-  }
-  for (let y = 0; y < h; y += step) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(w, y);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-export default function SignalCanvas({ faces, getFade, width, height }: Props) {
+export default function SignalCanvas({
+  faces,
+  getFade,
+  width,
+  height,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const timeRef = useRef(0);
   const rafRef = useRef<number>(0);
@@ -196,7 +177,6 @@ export default function SignalCanvas({ faces, getFade, width, height }: Props) {
 
     ctx.clearRect(0, 0, width, height);
 
-    drawGrid(ctx, width, height);
     drawScanLine(ctx, width, height, timeRef.current);
     drawConnectionLines(ctx, faces, getFade, width, height);
 
