@@ -45,6 +45,7 @@ export default function GalleryView({
   const handActiveRef = useRef(false);
   const faceImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const activeSoundsRef = useRef<Set<string>>(new Set());
+  const boxHoldStartRef = useRef<number>(0);
 
   const onPlayRef = useRef(onPlaySound);
   onPlayRef.current = onPlaySound;
@@ -342,6 +343,12 @@ export default function GalleryView({
 
       // --- Web connections between faces inside box ---
       if (box && newActive.size > 1) {
+        // Track hold duration
+        if (boxHoldStartRef.current === 0) boxHoldStartRef.current = now;
+        const holdSec = (now - boxHoldStartRef.current) / 1000;
+        const holdIntensity = Math.min(holdSec / 3, 1); // ramps up over 3 seconds
+        const pulseWave = 1 + Math.sin(now * 0.004 * (1 + holdIntensity)) * 0.3 * holdIntensity;
+
         const activeList = participants.filter(p => newActive.has(p.id));
         ctx.save();
         for (let i = 0; i < activeList.length; i++) {
@@ -355,40 +362,31 @@ export default function GalleryView({
             const bx = nB.x * width;
             const by = nB.y * height;
             const dist = Math.hypot(ax - bx, ay - by);
-            const alpha = Math.min(0.35, 80 / Math.max(dist, 1));
+            const baseAlpha = Math.min(0.5, 100 / Math.max(dist, 1));
+            const alpha = baseAlpha * (0.4 + holdIntensity * 0.6) * pulseWave;
 
             // Curved aesthetic web line
-            const mx = (ax + bx) / 2 + Math.sin(now * 0.001 + i * 0.7 + j * 1.3) * 12;
-            const my = (ay + by) / 2 + Math.cos(now * 0.0012 + j * 0.9 + i * 1.1) * 12;
+            const mx = (ax + bx) / 2 + Math.sin(now * 0.001 + i * 0.7 + j * 1.3) * 15;
+            const my = (ay + by) / 2 + Math.cos(now * 0.0012 + j * 0.9 + i * 1.1) * 15;
             ctx.beginPath();
             ctx.moveTo(ax, ay);
             ctx.quadraticCurveTo(mx, my, bx, by);
             const hue = (activeList[i].hue + activeList[j].hue) / 2;
-            ctx.strokeStyle = `hsla(${hue}, 35%, 65%, ${alpha})`;
-            ctx.lineWidth = 0.8;
+            ctx.strokeStyle = `hsla(${hue}, 40%, 68%, ${alpha})`;
+            ctx.lineWidth = 0.6 + holdIntensity * 1.8;
             ctx.stroke();
 
-            // Tiny dot at midpoint
+            // Dot at midpoint grows with hold
+            const dotR = 1 + holdIntensity * 2.5;
             ctx.beginPath();
-            ctx.arc(mx, my, 1.2, 0, Math.PI * 2);
-            ctx.fillStyle = `hsla(${hue}, 30%, 70%, ${alpha * 0.6})`;
+            ctx.arc(mx, my, dotR, 0, Math.PI * 2);
+            ctx.fillStyle = `hsla(${hue}, 35%, 72%, ${alpha * 0.7})`;
             ctx.fill();
           }
         }
         ctx.restore();
-      }
-
-      // --- Draw box ---
-      if (box) {
-        ctx.save();
-        ctx.strokeStyle = 'rgba(200, 210, 230, 0.3)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([5, 3]);
-        ctx.strokeRect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
-        ctx.setLineDash([]);
-        ctx.fillStyle = 'rgba(180, 200, 240, 0.02)';
-        ctx.fillRect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
-        ctx.restore();
+      } else {
+        boxHoldStartRef.current = 0;
       }
 
       // Hand fingertip glows
