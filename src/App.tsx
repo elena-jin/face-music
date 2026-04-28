@@ -459,20 +459,40 @@ export default function App() {
           />
 
           {/* Instructional text */}
-          <div className="absolute inset-0 flex items-end justify-center pb-24 pointer-events-none z-15">
-            <div className="text-center max-w-2xl px-8">
-              <p
-                className="text-xl md:text-2xl lg:text-3xl font-light tracking-wide text-white/40 leading-relaxed"
-                style={{ fontFamily: "'Inter', system-ui, sans-serif", textShadow: '0 2px 20px rgba(0,0,0,0.5)' }}
-              >
-                Turn your face into sound
-                <br />
-                <span className="text-white/25 text-base md:text-lg lg:text-xl">
-                  and harmonize with others in the gallery
-                </span>
-              </p>
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-15">
+            <div className="text-center max-w-3xl px-8">
+              {isCapturing ? (
+                <p
+                  className="text-3xl md:text-5xl lg:text-6xl font-extralight tracking-wider text-white/60 leading-tight animate-pulse"
+                  style={{ fontFamily: "'Inter', system-ui, sans-serif", textShadow: '0 4px 30px rgba(0,0,0,0.6)' }}
+                >
+                  Capturing your signal...
+                </p>
+              ) : activeFaces > 0 ? (
+                <p
+                  className="text-3xl md:text-5xl lg:text-6xl font-extralight tracking-wider text-white/50 leading-tight"
+                  style={{ fontFamily: "'Inter', system-ui, sans-serif", textShadow: '0 4px 30px rgba(0,0,0,0.6)' }}
+                >
+                  Hold still
+                  <br />
+                  <span className="text-white/30 text-xl md:text-2xl lg:text-3xl">
+                    your face is becoming sound
+                  </span>
+                </p>
+              ) : (
+                <p
+                  className="text-3xl md:text-5xl lg:text-6xl font-extralight tracking-wider text-white/40 leading-tight"
+                  style={{ fontFamily: "'Inter', system-ui, sans-serif", textShadow: '0 4px 30px rgba(0,0,0,0.6)' }}
+                >
+                  Turn your face into sound
+                  <br />
+                  <span className="text-white/25 text-xl md:text-2xl lg:text-3xl">
+                    step closer and hold still
+                  </span>
+                </p>
+              )}
               {participants.length > 0 && (
-                <p className="mt-4 text-[10px] tracking-[0.4em] text-white/20 uppercase font-mono">
+                <p className="mt-6 text-[10px] tracking-[0.4em] text-white/15 uppercase font-mono">
                   {participants.length} signal{participants.length !== 1 ? 's' : ''} in the constellation
                 </p>
               )}

@@ -340,6 +340,44 @@ export default function GalleryView({
       }
       activeSoundsRef.current = newActive;
 
+      // --- Web connections between faces inside box ---
+      if (box && newActive.size > 1) {
+        const activeList = participants.filter(p => newActive.has(p.id));
+        ctx.save();
+        for (let i = 0; i < activeList.length; i++) {
+          const nA = nodesRef.current.get(activeList[i].id);
+          if (!nA) continue;
+          const ax = nA.x * width;
+          const ay = nA.y * height;
+          for (let j = i + 1; j < activeList.length; j++) {
+            const nB = nodesRef.current.get(activeList[j].id);
+            if (!nB) continue;
+            const bx = nB.x * width;
+            const by = nB.y * height;
+            const dist = Math.hypot(ax - bx, ay - by);
+            const alpha = Math.min(0.35, 80 / Math.max(dist, 1));
+
+            // Curved aesthetic web line
+            const mx = (ax + bx) / 2 + Math.sin(now * 0.001 + i * 0.7 + j * 1.3) * 12;
+            const my = (ay + by) / 2 + Math.cos(now * 0.0012 + j * 0.9 + i * 1.1) * 12;
+            ctx.beginPath();
+            ctx.moveTo(ax, ay);
+            ctx.quadraticCurveTo(mx, my, bx, by);
+            const hue = (activeList[i].hue + activeList[j].hue) / 2;
+            ctx.strokeStyle = `hsla(${hue}, 35%, 65%, ${alpha})`;
+            ctx.lineWidth = 0.8;
+            ctx.stroke();
+
+            // Tiny dot at midpoint
+            ctx.beginPath();
+            ctx.arc(mx, my, 1.2, 0, Math.PI * 2);
+            ctx.fillStyle = `hsla(${hue}, 30%, 70%, ${alpha * 0.6})`;
+            ctx.fill();
+          }
+        }
+        ctx.restore();
+      }
+
       // --- Draw box ---
       if (box) {
         ctx.save();
