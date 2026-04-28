@@ -223,7 +223,13 @@ export default function App() {
         setActiveFaces(trackerRef.current.getActiveFaceCount());
 
         if (soundRef.current) {
-          soundRef.current.updateLiveFaces(tracked, (f) =>
+          const trackedWithExpression = tracked.map((f) => {
+            if (f.landmarks.length >= 468) {
+              return { ...f, expression: measureExpression(f.landmarks) };
+            }
+            return f;
+          });
+          soundRef.current.updateLiveFaces(trackedWithExpression, (f) =>
             trackerRef.current?.getFadeAmount(f) ?? 0
           );
           setLiveVoiceCount(soundRef.current.getLiveVoiceCount());

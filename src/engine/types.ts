@@ -15,6 +15,7 @@ export interface TrackedFace {
   firstSeen: number;
   lastSeen: number;
   active: boolean;
+  expression?: { mouthOpen: number; eyebrowRaise: number; smile: number };
 }
 
 export interface ExpressionSnapshot {

@@ -1,9 +1,10 @@
 import * as Tone from 'tone';
 import type { TrackedFace, Participant } from './types';
 
-const PENTATONIC = ['C', 'D', 'E', 'G', 'A'];
-const OCTAVE_RANGE = [3, 4, 5, 6];
-const WAVEFORMS: Array<'sine' | 'triangle' | 'square' | 'sawtooth'> = ['sine', 'triangle', 'square', 'sawtooth'];
+const MAJOR_PENTATONIC = ['C', 'D', 'E', 'G', 'A'];
+const MINOR_PENTATONIC = ['C', 'Eb', 'F', 'G', 'Bb'];
+const OCTAVE_RANGE = [3, 4, 5];
+const WAVEFORMS: Array<'sine' | 'triangle'> = ['sine', 'triangle'];
 
 function faceDNAToSoundParams(faceDNA: string): { noteIdx: number; octaveIdx: number; waveIdx: number; detune: number } {
   let hash = 0;
@@ -12,9 +13,9 @@ function faceDNAToSoundParams(faceDNA: string): { noteIdx: number; octaveIdx: nu
   }
   const abs = Math.abs(hash);
   return {
-    noteIdx: abs % PENTATONIC.length,
+    noteIdx: abs % MAJOR_PENTATONIC.length,
     octaveIdx: (abs >> 4) % OCTAVE_RANGE.length,
-    waveIdx: (abs >> 8) % WAVEFORMS.length,
+    waveIdx: (abs >> 8) % 2,
     detune: ((abs >> 12) % 50) - 25,
   };
 }
@@ -27,6 +28,8 @@ interface LiveVoice {
   lastNote: string;
   nextNoteTime: number;
   fadeTarget: number;
+  baseNoteIdx: number;
+  baseOctave: number;
 }
 
 interface StoredVoice {
@@ -49,14 +52,16 @@ export class SoundEngine {
   private droneOsc: Tone.Oscillator | null = null;
   private droneFilter: Tone.Filter | null = null;
   private chorus: Tone.Chorus | null = null;
+  private limiter: Tone.Limiter | null = null;
   private userHighlightedIds: Set<string> = new Set();
 
   async start(): Promise<void> {
     if (this.started) return;
     await Tone.start();
 
-    this.compressor = new Tone.Compressor(-24, 4).toDestination();
-    this.masterGain = new Tone.Gain(0.7).connect(this.compressor);
+    this.limiter = new Tone.Limiter(-6).toDestination();
+    this.compressor = new Tone.Compressor(-20, 6).connect(this.limiter);
+    this.masterGain = new Tone.Gain(0.5).connect(this.compressor);
     this.reverb = new Tone.Reverb({ decay: 6, wet: 0.45 });
     await this.reverb.generate();
     this.reverb.connect(this.masterGain);
@@ -78,13 +83,15 @@ export class SoundEngine {
     const tick = () => {
       const now = Tone.now();
 
+      const liveCount = this.liveVoices.size;
+      const liveGainScale = liveCount > 0 ? Math.min(1, 1.5 / Math.sqrt(liveCount)) : 1;
       for (const [, voice] of this.liveVoices) {
         if (now >= voice.nextNoteTime) {
-          voice.synth.triggerAttackRelease(voice.lastNote, '4n', now);
-          const interval = 1.5 + Math.random() * 2.5;
+          voice.synth.triggerAttackRelease(voice.lastNote, '2n', now);
+          const interval = 2.0 + Math.random() * 3.0;
           voice.nextNoteTime = now + interval;
         }
-        voice.gain.gain.rampTo(voice.fadeTarget * 0.15, 0.3);
+        voice.gain.gain.rampTo(voice.fadeTarget * 0.10 * liveGainScale, 0.5);
       }
 
       for (const [, sv] of this.storedVoices) {
@@ -138,10 +145,23 @@ export class SoundEngine {
         this.liveVoices.set(face.id, voice);
       }
 
-      voice.panner.pan.rampTo((face.centerX - 0.5) * 1.6, 0.2);
-      const brightness = 400 + face.velocity * 4000 + (1 - face.faceWidth) * 1500;
-      voice.filter.frequency.rampTo(Math.min(brightness, 4000), 0.5);
+      voice.panner.pan.rampTo((face.centerX - 0.5) * 1.2, 0.3);
+      const brightness = 600 + face.velocity * 2000 + (1 - face.faceWidth) * 800;
+      voice.filter.frequency.rampTo(Math.min(brightness, 3000), 0.8);
       voice.fadeTarget = fade;
+
+      if (face.expression) {
+        const { smile, mouthOpen, eyebrowRaise } = face.expression;
+        const isMajor = smile > 3.5;
+        const scale = isMajor ? MAJOR_PENTATONIC : MINOR_PENTATONIC;
+        const noteIdx = voice.baseNoteIdx % scale.length;
+        const note = `${scale[noteIdx]}${voice.baseOctave}`;
+        if (voice.lastNote !== note) {
+          voice.lastNote = note;
+        }
+        const expressionBrightness = 800 + smile * 200 + mouthOpen * 1500 - eyebrowRaise * 300;
+        voice.filter.frequency.rampTo(Math.min(Math.max(expressionBrightness, 400), 3000), 0.5);
+      }
     }
   }
 
@@ -271,20 +291,23 @@ export class SoundEngine {
     gain.connect(this.reverb);
 
     const synth = new Tone.Synth({
-      oscillator: { type: WAVEFORMS[params.waveIdx] },
-      envelope: { attack: 1.2, decay: 0.8, sustain: 0.25, release: 3.5 },
-      volume: -22,
+      oscillator: { type: WAVEFORMS[params.waveIdx % WAVEFORMS.length] },
+      envelope: { attack: 1.5, decay: 1.0, sustain: 0.2, release: 4.0 },
+      volume: -26,
     }).connect(filter);
     synth.detune.value = params.detune;
 
-    const octave = OCTAVE_RANGE[params.octaveIdx];
-    const note = `${PENTATONIC[params.noteIdx]}${octave}`;
+    const octave = OCTAVE_RANGE[params.octaveIdx % OCTAVE_RANGE.length];
+    const noteIdx = params.noteIdx % MAJOR_PENTATONIC.length;
+    const note = `${MAJOR_PENTATONIC[noteIdx]}${octave}`;
 
     return {
       synth, panner, filter, gain,
       lastNote: note,
-      nextNoteTime: Tone.now() + Math.random() * 2,
+      nextNoteTime: Tone.now() + Math.random() * 3,
       fadeTarget: 1,
+      baseNoteIdx: noteIdx,
+      baseOctave: octave,
     };
   }
 
@@ -332,6 +355,7 @@ export class SoundEngine {
     this.chorus?.dispose();
     this.reverb?.dispose();
     this.compressor?.dispose();
+    this.limiter?.dispose();
     this.masterGain?.dispose();
     this.started = false;
   }
