@@ -87,7 +87,9 @@ export class SoundEngine {
               sv.player.start(now);
             }
           } catch { /* ignore */ }
-          sv.nextPlayTime = now + 10 + Math.random() * 25;
+          const count = this.storedVoices.size;
+          const interval = count > 10 ? 4 + Math.random() * 8 : 5 + Math.random() * 12;
+          sv.nextPlayTime = now + interval;
         }
       }
 
@@ -124,19 +126,26 @@ export class SoundEngine {
       voice.fadeTarget = fade;
 
       if (face.expression) {
-        const { smile } = face.expression;
+        const { smile, mouthOpen, eyebrowRaise } = face.expression;
         const isMajor = smile > 3.5;
         const scale = isMajor ? MAJOR_PENTATONIC : MINOR_PENTATONIC;
-        const note = `${scale[voice.baseNoteIdx % scale.length]}${voice.baseOctave}`;
+
+        // Mouth opening shifts note up within scale
+        const mouthShift = Math.floor(mouthOpen * 15);
+        const noteIdx = (voice.baseNoteIdx + mouthShift) % scale.length;
+        const octaveShift = eyebrowRaise > 0.35 ? 1 : 0;
+        const octave = Math.min(voice.baseOctave + octaveShift, 5);
+        const note = `${scale[noteIdx]}${octave}`;
         if (voice.lastNote !== note) {
           voice.lastNote = note;
         }
 
-        const targetFreq = 600 + smile * 200;
-        if (Math.abs(targetFreq - voice.appliedFreq) > 80) {
+        // Smile brightens, eyebrow raise darkens, mouth opening opens filter
+        const targetFreq = 500 + smile * 250 + mouthOpen * 600 - eyebrowRaise * 200;
+        if (Math.abs(targetFreq - voice.appliedFreq) > 50) {
           voice.appliedFreq = targetFreq;
           voice.filter.frequency.linearRampTo(
-            Math.min(Math.max(targetFreq, 400), 2000), 2
+            Math.min(Math.max(targetFreq, 300), 2500), 1.5
           );
         }
       }

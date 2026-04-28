@@ -476,6 +476,27 @@ export default function App() {
             className="absolute inset-0 w-full h-full object-cover opacity-[0.25] grayscale scale-x-[-1] pointer-events-none"
           />
 
+          {/* Instructional text */}
+          <div className="absolute inset-0 flex items-end justify-center pb-24 pointer-events-none z-15">
+            <div className="text-center max-w-2xl px-8">
+              <p
+                className="text-xl md:text-2xl lg:text-3xl font-light tracking-wide text-white/40 leading-relaxed"
+                style={{ fontFamily: "'Inter', system-ui, sans-serif", textShadow: '0 2px 20px rgba(0,0,0,0.5)' }}
+              >
+                Turn your face into sound
+                <br />
+                <span className="text-white/25 text-base md:text-lg lg:text-xl">
+                  and harmonize with others in the gallery
+                </span>
+              </p>
+              {participants.length > 0 && (
+                <p className="mt-4 text-[10px] tracking-[0.4em] text-white/20 uppercase font-mono">
+                  {participants.length} signal{participants.length !== 1 ? 's' : ''} in the constellation
+                </p>
+              )}
+            </div>
+          </div>
+
           {/* Live face detection canvas */}
           <SignalCanvas
             faces={faces}
