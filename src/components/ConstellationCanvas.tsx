@@ -160,6 +160,8 @@ function drawConstellation(
     }
 
     if (isHighlighted) {
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
       ctx.strokeStyle = `hsla(${p.hue}, 80%, 80%, 0.6)`;
       ctx.lineWidth = 1.5;
       ctx.stroke();
