@@ -29,7 +29,7 @@ export class AudioCapture {
         ).toDestination();
 
         const synth = new Tone.Synth({
-          oscillator: { type: 'sine' },
+          oscillator: { type: params.waveform },
           envelope: { attack: 0.5, decay: 0.8, sustain: 0.4, release: 1.2 },
           volume: -8,
         }).connect(filter);
