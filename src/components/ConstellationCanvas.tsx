@@ -5,6 +5,7 @@ interface Props {
   participants: Participant[];
   effects: ParticleEffect[];
   highlightedId: string | null;
+  captureGlowId: string | null;
   width: number;
   height: number;
   onHover: (id: string | null) => void;
@@ -41,6 +42,8 @@ function drawConstellation(
   participants: Participant[],
   effects: ParticleEffect[],
   highlightedId: string | null,
+  captureGlowId: string | null,
+  captureGlowStart: number,
   w: number,
   h: number,
   time: number
@@ -114,10 +117,28 @@ function drawConstellation(
     const x = p.nodeX * w;
     const y = p.nodeY * h;
     const isHighlighted = p.id === highlightedId;
+    const isCaptureGlow = p.id === captureGlowId;
     const pulse = Math.sin(time * 0.002 + p.hue) * 0.3 + 0.7;
     const r = isHighlighted ? NODE_RADIUS * 2 : NODE_RADIUS;
 
-    // glow
+    // capture glow animation
+    if (isCaptureGlow && captureGlowStart > 0) {
+      const elapsed = time - captureGlowStart;
+      const glowDuration = 1500;
+      if (elapsed < glowDuration) {
+        const progress = elapsed / glowDuration;
+        const glowSize = 20 + progress * 60;
+        const glowA = (1 - progress) * 0.6;
+        const captureGlow = ctx.createRadialGradient(x, y, 0, x, y, glowSize);
+        captureGlow.addColorStop(0, `hsla(${p.hue}, 90%, 80%, ${glowA})`);
+        captureGlow.addColorStop(0.5, `hsla(${p.hue}, 80%, 70%, ${glowA * 0.4})`);
+        captureGlow.addColorStop(1, `hsla(${p.hue}, 80%, 70%, 0)`);
+        ctx.fillStyle = captureGlow;
+        ctx.fillRect(x - glowSize, y - glowSize, glowSize * 2, glowSize * 2);
+      }
+    }
+
+    // regular glow
     const glowAlpha = isHighlighted ? 0.4 : 0.1 * pulse;
     const glowR = isHighlighted ? 30 : 15;
     const glow = ctx.createRadialGradient(x, y, 0, x, y, glowR);
@@ -132,15 +153,16 @@ function drawConstellation(
     ctx.fillStyle = `hsla(${p.hue}, 60%, 65%, ${isHighlighted ? 0.9 : 0.5 * pulse})`;
     ctx.fill();
 
+    // mini face wireframe on all nodes
+    if (p.landmarks && p.landmarks.length > 0) {
+      const faceAlpha = isHighlighted ? 0.6 : 0.2 * pulse;
+      drawMiniFace(ctx, p, x, y - (isHighlighted ? 0 : 2), isHighlighted ? 60 : 30, faceAlpha);
+    }
+
     if (isHighlighted) {
       ctx.strokeStyle = `hsla(${p.hue}, 80%, 80%, 0.6)`;
       ctx.lineWidth = 1.5;
       ctx.stroke();
-
-      // mini face outline from stored landmarks
-      if (p.landmarks && p.landmarks.length > 0) {
-        drawMiniFace(ctx, p, x, y);
-      }
     }
   }
 
@@ -161,11 +183,12 @@ function drawMiniFace(
   ctx: CanvasRenderingContext2D,
   p: Participant,
   cx: number,
-  cy: number
+  cy: number,
+  scale: number = 60,
+  alpha: number = 0.5
 ) {
   const lm = p.landmarks;
   if (!lm || lm.length < 468) return;
-  const scale = 60;
   const refX = lm[1].x;
   const refY = lm[1].y;
   const outline = [
@@ -173,21 +196,33 @@ function drawMiniFace(
     379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93,
     234, 127, 162, 21, 54, 103, 67, 109, 10,
   ];
+  const leftEye = [33, 160, 158, 133, 153, 144, 33];
+  const rightEye = [362, 385, 387, 263, 373, 380, 362];
+  const lips = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84, 181, 91, 146, 61];
 
   ctx.save();
-  ctx.globalAlpha = 0.5;
-  ctx.beginPath();
-  for (let i = 0; i < outline.length; i++) {
-    const pt = lm[outline[i]];
-    if (!pt) continue;
-    const x = cx + (pt.x - refX) * scale;
-    const y = cy + (pt.y - refY) * scale;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.strokeStyle = `hsla(${p.hue}, 60%, 70%, 0.6)`;
-  ctx.lineWidth = 1;
-  ctx.stroke();
+  ctx.globalAlpha = alpha;
+
+  const drawPath = (indices: number[], color: string, lineW: number) => {
+    ctx.beginPath();
+    for (let i = 0; i < indices.length; i++) {
+      const pt = lm[indices[i]];
+      if (!pt) continue;
+      const x = cx + (pt.x - refX) * scale;
+      const y = cy + (pt.y - refY) * scale;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineW;
+    ctx.stroke();
+  };
+
+  drawPath(outline, `hsla(${p.hue}, 60%, 70%, 0.6)`, scale > 40 ? 1 : 0.6);
+  drawPath(leftEye, `hsla(${p.hue}, 70%, 75%, 0.7)`, scale > 40 ? 0.8 : 0.4);
+  drawPath(rightEye, `hsla(${p.hue}, 70%, 75%, 0.7)`, scale > 40 ? 0.8 : 0.4);
+  drawPath(lips, `hsla(${p.hue}, 50%, 65%, 0.5)`, scale > 40 ? 0.6 : 0.3);
+
   ctx.restore();
 }
 
@@ -224,6 +259,7 @@ export default function ConstellationCanvas({
   participants,
   effects,
   highlightedId,
+  captureGlowId,
   width,
   height,
   onHover,
@@ -231,6 +267,13 @@ export default function ConstellationCanvas({
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animEffects = useRef<ParticleEffect[]>([]);
+  const captureGlowStartRef = useRef(0);
+
+  useEffect(() => {
+    if (captureGlowId) {
+      captureGlowStartRef.current = performance.now();
+    }
+  }, [captureGlowId]);
 
   useEffect(() => {
     animEffects.current = effects;
@@ -289,6 +332,8 @@ export default function ConstellationCanvas({
         participants,
         animEffects.current,
         highlightedId,
+        captureGlowId,
+        captureGlowStartRef.current,
         width,
         height,
         performance.now()

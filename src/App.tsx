@@ -46,6 +46,7 @@ export default function App() {
   const [activeView, setActiveView] = useState<'live' | 'gallery'>('live');
 
   const [isCapturing, setIsCapturing] = useState(false);
+  const [captureGlowId, setCaptureGlowId] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackerRef = useRef<FaceTracker | null>(null);
@@ -195,6 +196,9 @@ export default function App() {
         participant.hue
       );
       setParticleEffects((prev) => [...prev, splatter]);
+
+      setCaptureGlowId(participant.id);
+      setTimeout(() => setCaptureGlowId(null), 1600);
     } finally {
       capturingFaceId.current = null;
       setIsCapturing(false);
@@ -313,6 +317,18 @@ export default function App() {
     soundRef.current?.unhighlightParticipant(id);
   }, []);
 
+  // Start/stop gallery melody based on view
+  useEffect(() => {
+    if (activeView === 'gallery' && participants.length > 0) {
+      soundRef.current?.startMelodyPlayback();
+    } else {
+      soundRef.current?.stopMelodyPlayback();
+    }
+    return () => {
+      soundRef.current?.stopMelodyPlayback();
+    };
+  }, [activeView, participants.length]);
+
   // Connect stream to video element once both are available
   useEffect(() => {
     if (started && videoRef.current && streamRef.current) {
@@ -382,6 +398,7 @@ export default function App() {
             participants={participants}
             effects={particleEffects}
             highlightedId={highlightedNode}
+            captureGlowId={captureGlowId}
             width={dimensions.w}
             height={dimensions.h}
             onHover={handleNodeHover}

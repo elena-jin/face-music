@@ -3,6 +3,21 @@ import type { TrackedFace, Participant } from './types';
 
 const PENTATONIC = ['C', 'D', 'E', 'G', 'A'];
 const OCTAVE_RANGE = [3, 4, 5, 6];
+const WAVEFORMS: Array<'sine' | 'triangle' | 'square' | 'sawtooth'> = ['sine', 'triangle', 'square', 'sawtooth'];
+
+function faceDNAToSoundParams(faceDNA: string): { noteIdx: number; octaveIdx: number; waveIdx: number; detune: number } {
+  let hash = 0;
+  for (let i = 0; i < faceDNA.length; i++) {
+    hash = ((hash << 5) - hash + faceDNA.charCodeAt(i)) | 0;
+  }
+  const abs = Math.abs(hash);
+  return {
+    noteIdx: abs % PENTATONIC.length,
+    octaveIdx: (abs >> 4) % OCTAVE_RANGE.length,
+    waveIdx: (abs >> 8) % WAVEFORMS.length,
+    detune: ((abs >> 12) % 50) - 25,
+  };
+}
 
 interface LiveVoice {
   synth: Tone.Synth;
@@ -123,10 +138,6 @@ export class SoundEngine {
       }
 
       voice.panner.pan.rampTo((face.centerX - 0.5) * 1.6, 0.2);
-      const octaveIdx = Math.floor(face.centerY * OCTAVE_RANGE.length);
-      const octave = OCTAVE_RANGE[Math.min(octaveIdx, OCTAVE_RANGE.length - 1)];
-      const noteIdx = Math.floor(((face.centerX + face.centerY) * 2.5) % PENTATONIC.length);
-      voice.lastNote = `${PENTATONIC[noteIdx]}${octave}`;
       const brightness = 400 + face.velocity * 4000 + (1 - face.faceWidth) * 1500;
       voice.filter.frequency.rampTo(Math.min(brightness, 4000), 0.5);
       voice.fadeTarget = fade;
@@ -213,10 +224,42 @@ export class SoundEngine {
     sv.filter.frequency.rampTo(1800, 1);
   }
 
+  private melodyInterval: number | null = null;
+
+  startMelodyPlayback(): void {
+    this.stopMelodyPlayback();
+    if (this.storedVoices.size === 0) return;
+
+    const ids = [...this.storedVoices.keys()];
+    let idx = 0;
+
+    const playNext = () => {
+      if (idx > 0) {
+        this.unhighlightParticipant(ids[(idx - 1) % ids.length]);
+      }
+      const currentId = ids[idx % ids.length];
+      this.highlightParticipant(currentId);
+      idx++;
+    };
+
+    playNext();
+    this.melodyInterval = window.setInterval(playNext, 2500);
+  }
+
+  stopMelodyPlayback(): void {
+    if (this.melodyInterval !== null) {
+      clearInterval(this.melodyInterval);
+      this.melodyInterval = null;
+      for (const [id] of this.storedVoices) {
+        this.unhighlightParticipant(id);
+      }
+    }
+  }
+
   private createLiveVoice(face: TrackedFace): LiveVoice | null {
     if (!this.reverb) return null;
-    const waveforms = ['sine', 'triangle', 'sine'] as const;
-    const waveIdx = parseInt(face.id.replace('face-', ''), 10) % waveforms.length;
+
+    const params = faceDNAToSoundParams(face.id);
 
     const gain = new Tone.Gain(0);
     const panner = new Tone.Panner(0).connect(gain);
@@ -224,14 +267,14 @@ export class SoundEngine {
     gain.connect(this.reverb);
 
     const synth = new Tone.Synth({
-      oscillator: { type: waveforms[waveIdx] as 'sine' | 'triangle' },
+      oscillator: { type: WAVEFORMS[params.waveIdx] },
       envelope: { attack: 1.2, decay: 0.8, sustain: 0.25, release: 3.5 },
       volume: -22,
     }).connect(filter);
+    synth.detune.value = params.detune;
 
-    const octave = OCTAVE_RANGE[Math.floor(face.centerY * OCTAVE_RANGE.length)] ?? 4;
-    const noteIdx = Math.floor(face.centerX * PENTATONIC.length);
-    const note = `${PENTATONIC[noteIdx % PENTATONIC.length]}${octave}`;
+    const octave = OCTAVE_RANGE[params.octaveIdx];
+    const note = `${PENTATONIC[params.noteIdx]}${octave}`;
 
     return {
       synth, panner, filter, gain,
@@ -263,6 +306,7 @@ export class SoundEngine {
   }
 
   stop(): void {
+    this.stopMelodyPlayback();
     if (this.loopId !== null) cancelAnimationFrame(this.loopId);
     for (const [, voice] of this.liveVoices) {
       voice.synth.dispose();
