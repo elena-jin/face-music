@@ -231,7 +231,7 @@ export default function GalleryView({
         y: fp.y * height,
       }));
 
-      // Conduct: fingers push nearby nodes and trigger sounds
+      // Conduct: fingers grab and move nearby nodes
       const newConducted = new Set<string>();
       for (const finger of fingers) {
         for (const p of participants) {
@@ -240,12 +240,20 @@ export default function GalleryView({
           const dx = pos.x - finger.x;
           const dy = pos.y - finger.y;
           const dist = Math.hypot(dx, dy);
-          if (dist < CONDUCT_RADIUS && dist > 0) {
+          if (dist < CONDUCT_RADIUS) {
             newConducted.add(p.id);
-            // Push node away from finger
-            const force = (CONDUCT_RADIUS - dist) / CONDUCT_RADIUS * 2;
-            pos.vx += (dx / dist) * force;
-            pos.vy += (dy / dist) * force;
+            if (dist < 30) {
+              // Very close: drag node with finger
+              pos.x += (finger.x - pos.x) * 0.3;
+              pos.y += (finger.y - pos.y) * 0.3;
+              pos.vx *= 0.5;
+              pos.vy *= 0.5;
+            } else if (dist > 0) {
+              // Push node away from finger
+              const force = (CONDUCT_RADIUS - dist) / CONDUCT_RADIUS * 3;
+              pos.vx += (dx / dist) * force;
+              pos.vy += (dy / dist) * force;
+            }
           }
         }
       }

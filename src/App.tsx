@@ -9,7 +9,7 @@ import ConstellationCanvas, { createSplatterEffect } from './components/Constell
 import StatusOverlay from './components/StatusOverlay';
 import GalleryView from './components/GalleryView';
 
-const DWELL_TIME_MS = 1000;
+const CAPTURE_COOLDOWN_MS = 1000;
 const EXPRESSION_SAMPLE_INTERVAL = 200;
 
 function measureExpression(landmarks: FaceLandmark[]): { mouthOpen: number; eyebrowRaise: number; smile: number } {
@@ -57,7 +57,7 @@ export default function App() {
   const storeRef = useRef<ParticipantStore | null>(null);
   const rafRef = useRef<number>(0);
 
-  const dwellTimers = useRef<Map<string, number>>(new Map());
+  const lastCaptureTime = useRef<Map<string, number>>(new Map());
   const capturedFaces = useRef<Set<string>>(new Set());
   const capturingFaceId = useRef<string | null>(null);
   const expressionSnapshots = useRef<Map<string, ExpressionSnapshot[]>>(new Map());
@@ -165,7 +165,6 @@ export default function App() {
 
   const captureParticipant = useCallback(async (face: TrackedFace) => {
     if (!captureRef.current || !storeRef.current || !soundRef.current) return;
-    if (capturedFaces.current.has(face.id)) return;
     if (capturingFaceId.current) return;
 
     capturingFaceId.current = face.id;
@@ -290,17 +289,7 @@ export default function App() {
 
         const now = Date.now();
         for (const face of tracked) {
-          if (!face.active) {
-            dwellTimers.current.delete(face.id);
-            continue;
-          }
-          if (capturedFaces.current.has(face.id)) continue;
-
-          if (!dwellTimers.current.has(face.id)) {
-            dwellTimers.current.set(face.id, now);
-          }
-          const dwellStart = dwellTimers.current.get(face.id)!;
-          const dwellMs = now - dwellStart;
+          if (!face.active) continue;
 
           const lastSample = lastExpressionSample.current.get(face.id) ?? 0;
           if (now - lastSample >= EXPRESSION_SAMPLE_INTERVAL && face.landmarks.length >= 468) {
@@ -316,14 +305,11 @@ export default function App() {
             expressionSnapshots.current.set(face.id, snaps);
           }
 
-          if (dwellMs >= DWELL_TIME_MS && !capturingFaceId.current) {
+          // Capture every detected face, with cooldown per face
+          const lastCapture = lastCaptureTime.current.get(face.id) ?? 0;
+          if (now - lastCapture >= CAPTURE_COOLDOWN_MS && !capturingFaceId.current) {
+            lastCaptureTime.current.set(face.id, now);
             captureParticipant(face);
-          }
-        }
-
-        for (const [id] of dwellTimers.current) {
-          if (!tracked.find((f) => f.id === id && f.active)) {
-            dwellTimers.current.delete(id);
           }
         }
       }
